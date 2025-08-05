@@ -1,31 +1,26 @@
 ---
-title: "Spawning"
+title: "生成任务 (Spawning)"
 ---
 
-We are going to shift gears and start working on the Redis server.
+我们将转换方向，开始编写 Redis 服务器。
 
-First, move the client `SET`/`GET` code from the previous section to an example
-file. This way, we can run it against our server.
+首先，将上一节中的客户端 `SET`/`GET` 代码移动到一个示例文件中。这样，我们就可以对我们的服务器运行它。
 
 ```bash
 $ mkdir -p examples
 $ mv src/main.rs examples/hello-redis.rs
 ```
 
-Then create a new, empty `src/main.rs` and continue.
+然后创建一个新的、空的 `src/main.rs` 并继续。
 
-# Accepting sockets
+# 接受套接字 (Accepting sockets)
 
-The first thing our Redis server needs to do is to accept inbound TCP sockets.
-This is done by binding [`tokio::net::TcpListener`][tcpl] to port **6379**.
+我们的 Redis 服务器首先需要做的是接受入站的 TCP 套接字。这是通过将 [`tokio::net::TcpListener`][tcpl] 绑定到端口 **6379** 来完成的。
 
-> **info**
-> Many of Tokio's types are named the same as their synchronous equivalent in
-> the Rust standard library. When it makes sense, Tokio exposes the same APIs
-> as `std` but using `async fn`.
+> **信息**
+> Tokio 的许多类型与其在 Rust 标准库中的同步等效项同名。在合适的情况下，Tokio 暴露与 `std` 相同的 API，但使用的是 `async fn`。
 
-Then the sockets are accepted in a loop. Each socket is processed then closed.
-For now, we will read the command, print it to stdout and respond with an error.
+然后在循环中接受套接字。每个套接字都被处理然后关闭。现在，我们将读取命令，将其打印到标准输出并响应一个错误。
 
 `src/main.rs`
 
@@ -36,11 +31,11 @@ use mini_redis::{Connection, Frame};
 # fn dox() {
 #[tokio::main]
 async fn main() {
-    // Bind the listener to the address
+    // 将监听器绑定到地址
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
 
     loop {
-        // The second item contains the IP and port of the new connection.
+        // 第二个项包含新连接的 IP 和端口。
         let (socket, _) = listener.accept().await.unwrap();
         process(socket).await;
     }
@@ -48,41 +43,39 @@ async fn main() {
 # }
 
 async fn process(socket: TcpStream) {
-    // The `Connection` lets us read/write redis **frames** instead of
-    // byte streams. The `Connection` type is defined by mini-redis.
+    // `Connection` 允许我们读/取 redis **帧 (frames)**，而不是字节流。
+    // `Connection` 类型由 mini-redis 定义。
     let mut connection = Connection::new(socket);
 
     if let Some(frame) = connection.read_frame().await.unwrap() {
         println!("GOT: {:?}", frame);
 
-        // Respond with an error
+        // 响应一个错误
         let response = Frame::Error("unimplemented".to_string());
         connection.write_frame(&response).await.unwrap();
     }
 }
 ```
 
-Now, run this accept loop:
+现在，运行这个接受循环：
 
 ```bash
 $ cargo run
 ```
 
-In a separate terminal window, run the `hello-redis` example (the `SET`/`GET`
-command from the previous section, which is playing the role of the Redis
-client):
+在单独的终端窗口中，运行 `hello-redis` 示例（即上一节中的 `SET`/`GET` 命令，它扮演 Redis 客户端的角色）：
 
 ```bash
 $ cargo run --example hello-redis
 ```
 
-The output should be:
+输出应该是：
 
 ```text
 Error: "unimplemented"
 ```
 
-In the server terminal, the output is:
+在服务器终端中，输出是：
 
 ```text
 GOT: Array([Bulk(b"set"), Bulk(b"hello"), Bulk(b"world")])
@@ -90,31 +83,20 @@ GOT: Array([Bulk(b"set"), Bulk(b"hello"), Bulk(b"world")])
 
 [tcpl]: https://docs.rs/tokio/1/tokio/net/struct.TcpListener.html
 
-# Concurrency
+# 并发 (Concurrency)
 
-Our server has a slight problem (besides only responding with errors). It
-processes inbound requests one at a time. When a connection is accepted, the
-server stays inside the accept loop block until the response is fully written to
-the socket.
+我们的服务器有一个小问题（除了只响应错误之外）。它一次只处理一个入站请求。当一个连接被接受时，服务器会一直停留在接受循环块中，直到响应完全写入套接字。
 
-We want our Redis server to process **many** concurrent requests. To do this, we
-need to add some concurrency.
+我们希望我们的 Redis 服务器能够处理**许多**并发的请求。为此，我们需要添加一些并发性。
 
-> **info**
-> Concurrency and parallelism are not the same thing. If you alternate between
-> two tasks, then you are working on both tasks concurrently, but not in
-> parallel. For it to qualify as parallel, you would need two people, one
-> dedicated to each task.
+> **信息**
+> 并发 (concurrency) 和并行 (parallelism) 不是一回事。如果你在两个任务之间交替进行，那么你就是在同时处理这两个任务，但不是并行处理。要符合并行的条件，你需要两个人，一个人专门负责一个任务。
 >
-> One of the advantages of using Tokio is that asynchronous code allows you to
-> work on many tasks concurrently, without having to work on them in parallel
-> using ordinary threads. In fact, Tokio can run many tasks concurrently on a
-> single thread!
+> 使用 Tokio 的优势之一是异步代码允许你处理许多并发任务，而不必使用普通线程并行处理它们。事实上，Tokio 可以在单个线程上并发运行许多任务！
 
-To process connections concurrently, a new task is spawned for each inbound
-connection. The connection is processed on this task.
+为了并发处理连接，为每个入站连接生成一个新任务。连接在此任务上处理。
 
-The accept loop becomes:
+接受循环变为：
 
 ```rust
 use tokio::net::TcpListener;
@@ -126,8 +108,7 @@ async fn main() {
 
     loop {
         let (socket, _) = listener.accept().await.unwrap();
-        // A new task is spawned for each inbound socket. The socket is
-        // moved to the new task and processed there.
+        // 为每个入站套接字生成一个新任务。套接字被移动到新任务并在那里处理。
         tokio::spawn(async move {
             process(socket).await;
         });
@@ -137,61 +118,43 @@ async fn main() {
 # async fn process(_: tokio::net::TcpStream) {}
 ```
 
-## Tasks
+## 任务 (Tasks)
 
-A Tokio task is an asynchronous green thread. They are created by passing an
-`async` block to `tokio::spawn`. The `tokio::spawn` function returns a
-`JoinHandle`, which the caller may use to interact with the spawned task. The
-`async` block may have a return value. The caller may obtain the return value
-using `.await` on the `JoinHandle`.
+Tokio 任务是一个异步的绿色线程。它们通过将一个 `async` 代码块传递给 `tokio::spawn` 来创建。`tokio::spawn` 函数返回一个 `JoinHandle`，调用者可以使用它与生成的任务进行交互。`async` 代码块可以有一个返回值。调用者可以通过在 `JoinHandle` 上使用 `.await` 来获取返回值。
 
-For example:
+例如：
 
 ```rust
 #[tokio::main]
 async fn main() {
     let handle = tokio::spawn(async {
-        // Do some async work
+        // 执行一些异步工作
         "return value"
     });
 
-    // Do some other work
+    // 执行一些其他工作
 
     let out = handle.await.unwrap();
     println!("GOT {}", out);
 }
 ```
 
-Awaiting on `JoinHandle` returns a `Result`. When a task encounters an error
-during execution, the `JoinHandle` will return an `Err`. This happens when the
-task either panics, or if the task is forcefully cancelled by the runtime
-shutting down.
+在 `JoinHandle` 上等待会返回一个 `Result`。当任务在执行期间遇到错误时，`JoinHandle` 将返回一个 `Err`。当任务发生 panic，或者任务因运行时关闭而被强制取消时，就会发生这种情况。
 
-Tasks are the unit of execution managed by the scheduler. Spawning the task
-submits it to the Tokio scheduler, which then ensures that the task executes
-when it has work to do. The spawned task may be executed on the same thread
-as where it was spawned, or it may execute on a different runtime thread. The
-task can also be moved between threads after being spawned.
+任务是调度器管理的执行单元。生成任务会将其提交给 Tokio 调度器，然后调度器确保任务在有工作要做时执行。生成的任务可以在与生成它的线程相同的线程上执行，也可以在不同的运行时线程上执行。任务在生成后也可以在线程之间移动。
 
-Tasks in Tokio are very lightweight. Under the hood, they require only a single
-allocation and 64 bytes of memory. Applications should feel free to spawn
-thousands, if not millions of tasks.
+Tokio 中的任务非常轻量级。在底层，它们只需要一次分配和 64 字节的内存。应用程序应该可以自由地生成成千上万，甚至数百万个任务。
 
-## `'static` bound
+## `'static` 约束
 
-When you spawn a task on the Tokio runtime, its type's lifetime must be `'static`. This
-means that the spawned task must not contain any references to data owned
-outside the task.
+当你在 Tokio 运行时上生成一个任务时，其类型的生命周期必须是 `'static` 的。这意味着生成的任务不能包含对任务外部拥有的数据的任何引用。
 
-> **info**
-> It is a common misconception that `'static` always means "lives forever",
-> but this is not the case. Just because a value is `'static` does not mean
-> that you have a memory leak. You can read more in [Common Rust Lifetime
-> Misconceptions][common-lifetime].
+> **信息**
+> 一个常见的误解是 `'static` 总是意味着“永远存在”，但事实并非如此。仅仅因为一个值是 `'static` 的并不意味着你有内存泄漏。你可以在 [Common Rust Lifetime Misconceptions][common-lifetime] 中阅读更多内容。
 
 [common-lifetime]: https://github.com/pretzelhammer/rust-blog/blob/master/posts/common-rust-lifetime-misconceptions.md#2-if-t-static-then-t-must-be-valid-for-the-entire-program
 
-For example, the following will not compile:
+例如，以下代码将无法编译：
 
 ```rust,compile_fail
 use tokio::task;
@@ -206,7 +169,7 @@ async fn main() {
 }
 ```
 
-Attempting to compile this results in the following error:
+尝试编译此代码会导致以下错误：
 
 ```text
 error[E0373]: async block may outlive the current function, but
@@ -237,50 +200,23 @@ help: to force the async block to take ownership of `v` (and any other
   |
 ```
 
-This happens because, by default, variables are not **moved** into async blocks.
-The `v` vector remains owned by the `main` function. The `println!` line borrows
-`v`. The rust compiler helpfully explains this to us and even suggests the fix!
-Changing line 7 to `task::spawn(async move {` will instruct the compiler to
-**move** `v` into the spawned task. Now, the task owns all of its data, making
-it `'static`.
+发生这种情况是因为，默认情况下，变量不会被**移动 (move)** 到 async 代码块中。`v` 向量仍然由 `main` 函数拥有。`println!` 行借用了 `v`。Rust 编译器向我们解释了这一点，甚至建议了解决方案！将第 7 行更改为 `task::spawn(async move {` 将指示编译器将 `v`**移动**到生成的任务中。现在，任务拥有其所有数据，使其成为 `'static` 的。
 
-If a single piece of data must be accessible from more than one task
-concurrently, then it must be shared using synchronization primitives such as
-`Arc`.
+如果单个数据片段必须能够被多个任务并发访问，那么它必须使用同步原语（如 `Arc`）来共享。
 
-Note that the error message talks about the argument type *outliving* the
-`'static` lifetime. This terminology can be rather confusing because the
-`'static` lifetime lasts until the end of the program, so if it outlives it,
-don't you have a memory leak? The explanation is that it is the *type*, not the
-*value* that must outlive the `'static` lifetime, and the value may be destroyed
-before its type is no longer valid.
+请注意，错误消息谈论的是参数类型*比 (outlive)* `'static` 生命周期更长。这个术语可能相当令人困惑，因为 `'static` 生命周期会持续到程序结束，所以如果它比 `'static` 生命周期更长，你不是就有内存泄漏了吗？解释是，是*类型*，而不是*值*必须比 `'static` 生命周期更长，并且值可以在其类型不再有效之前被销毁。
 
-When we say that a value is `'static`, all that means is that it would not be
-incorrect to keep that value around forever. This is important because the
-compiler is unable to reason about how long a newly spawned task stays around.
-We have to make sure that the task is allowed to live forever, so that Tokio
-can make the task run as long as it needs to.
+当我们说一个值是 `'static` 的时，这仅仅意味着永远保留该值不会是错误的。这一点很重要，因为编译器无法推断新生成的任务会存在多久。我们必须确保允许任务永远存在，以便 Tokio 可以根据需要使任务运行尽可能长的时间。
 
-The article that the info-box earlier links to uses the terminology "bounded by
-`'static`" rather than "its type outlives `'static`" or "the value is `'static`"
-to refer to `T: 'static`. These all mean the same thing, but are different from
-"annotated with `'static`" as in `&'static T`.
+前面信息框链接到的文章使用术语 "bounded by `'static`" 而不是 "its type outlives `'static`" 或 "the value is `'static`" 来指代 `T: 'static`。这些意思都是一样的，但与 "annotated with `'static`"（如 `&'static T` 中）不同。
 
-## `Send` bound
+## `Send` 约束
 
-Tasks spawned by `tokio::spawn` **must** implement `Send`. This allows the Tokio
-runtime to move the tasks between threads while they are suspended at an
-`.await`.
+由 `tokio::spawn` 生成的任务**必须**实现 `Send`。这允许 Tokio 运行时在任务在 `.await` 处挂起时在线程之间移动任务。
 
-Tasks are `Send` when **all** data that is held **across** `.await` calls is
-`Send`. This is a bit subtle. When `.await` is called, the task yields back to
-the scheduler. The next time the task is executed, it resumes from the point it
-last yielded. To make this work, all state that is used **after** `.await` must
-be saved by the task. If this state is `Send`, i.e. can be moved across threads,
-then the task itself can be moved across threads. Conversely, if the state is not
-`Send`, then neither is the task.
+当**所有**在 `.await` 调用**之间 (across)** 持有的数据都是 `Send` 时，任务就是 `Send` 的。这有点微妙。当调用 `.await` 时，任务会交还给调度器。下次任务执行时，它会从上次 yield 的地方恢复。为了使这个工作正常进行，所有在 `.await` **之后**使用的状态都必须被任务保存。如果这个状态是 `Send` 的，即可以在线程之间移动，那么任务本身也可以在线程之间移动。相反，如果状态不是 `Send` 的，那么任务也不是。
 
-For example, this works:
+例如，这个可以工作：
 
 ```rust
 use tokio::task::yield_now;
@@ -289,20 +225,19 @@ use std::rc::Rc;
 #[tokio::main]
 async fn main() {
     tokio::spawn(async {
-        // The scope forces `rc` to drop before `.await`.
+        // 作用域强制 `rc` 在 `.await` 之前被丢弃。
         {
             let rc = Rc::new("hello");
             println!("{}", rc);
         }
 
-        // `rc` is no longer used. It is **not** persisted when
-        // the task yields to the scheduler
+        // `rc` 不再被使用。当任务 yield 给调度器时，它**不会**被持久化。
         yield_now().await;
     });
 }
 ```
 
-This does not:
+而这个不行：
 
 ```rust,compile_fail
 use tokio::task::yield_now;
@@ -313,8 +248,7 @@ async fn main() {
     tokio::spawn(async {
         let rc = Rc::new("hello");
 
-        // `rc` is used after `.await`. It must be persisted to
-        // the task's state.
+        // `rc` 在 `.await` 之后被使用。它必须被持久化到任务的状态中。
         yield_now().await;
 
         println!("{}", rc);
@@ -322,7 +256,7 @@ async fn main() {
 }
 ```
 
-Attempting to compile the snippet results in:
+尝试编译此代码段会导致：
 
 ```text
 error: future cannot be sent between threads safely
@@ -330,7 +264,7 @@ error: future cannot be sent between threads safely
     |
 6   |     tokio::spawn(async {
     |     ^^^^^^^^^^^^ future created by async block is not `Send`
-    | 
+    |
    ::: [..]spawn.rs:127:21
     |
 127 |         T: Future + Send + 'static,
@@ -354,17 +288,13 @@ note: future is not `Send` as this value is used across an await
     |     - `rc` is later dropped here
 ```
 
-We will discuss a special case of this error in more depth [in the next
-chapter][mutex-guard].
+我们将在[下一章][mutex-guard]中更深入地讨论这个错误的一个特例。
 
 [mutex-guard]: shared-state#holding-a-mutexguard-across-an-await
 
-# Store values
+# 存储值 (Store values)
 
-We will now implement the `process` function to handle incoming commands. We
-will use a `HashMap` to store values. `SET` commands will insert into the
-`HashMap` and `GET` values will load them. Additionally, we will use a loop to
-accept more than one command per connection.
+现在我们将实现 `process` 函数来处理传入的命令。我们将使用 `HashMap` 来存储值。`SET` 命令将插入到 `HashMap` 中，而 `GET` 命令将加载它们。此外，我们将使用一个循环来为每个连接接受多个命令。
 
 ```rust
 use tokio::net::TcpStream;
@@ -374,26 +304,24 @@ async fn process(socket: TcpStream) {
     use mini_redis::Command::{self, Get, Set};
     use std::collections::HashMap;
 
-    // A hashmap is used to store data
+    // 使用 hashmap 来存储数据
     let mut db = HashMap::new();
 
-    // Connection, provided by `mini-redis`, handles parsing frames from
-    // the socket
+    // `Connection` 由 `mini-redis` 提供，处理从套接字解析帧
     let mut connection = Connection::new(socket);
 
-    // Use `read_frame` to receive a command from the connection.
+    // 使用 `read_frame` 从连接接收命令。
     while let Some(frame) = connection.read_frame().await.unwrap() {
         let response = match Command::from_frame(frame).unwrap() {
             Set(cmd) => {
-                // The value is stored as `Vec<u8>`
+                // 值被存储为 `Vec<u8>`
                 db.insert(cmd.key().to_string(), cmd.value().to_vec());
                 Frame::Simple("OK".to_string())
             }
             Get(cmd) => {
                 if let Some(value) = db.get(cmd.key()) {
-                    // `Frame::Bulk` expects data to be of type `Bytes`. This
-                    // type will be covered later in the tutorial. For now,
-                    // `&Vec<u8>` is converted to `Bytes` using `into()`.
+                    // `Frame::Bulk` 期望数据是 `Bytes` 类型。这个类型将在本教程后面介绍。
+                    // 现在，`&Vec<u8>` 使用 `into()` 转换为 `Bytes`。
                     Frame::Bulk(value.clone().into())
                 } else {
                     Frame::Null
@@ -402,36 +330,34 @@ async fn process(socket: TcpStream) {
             cmd => panic!("unimplemented {:?}", cmd),
         };
 
-        // Write the response to the client
+        // 将响应写入客户端
         connection.write_frame(&response).await.unwrap();
     }
 }
 ```
 
-Now, start the server:
+现在，启动服务器：
 
 ```bash
 $ cargo run
 ```
 
-and in a separate terminal window, run the `hello-redis` client example again:
+在单独的终端窗口中，再次运行 `hello-redis` 客户端示例：
 
 ```bash
 $ cargo run --example hello-redis
 ```
 
-Now, the output from the client will be:
+现在，来自客户端的输出将是：
 
 ```text
 got value from the server; result=Some(b"world")
 ```
 
-We can now get and set values, but there is a problem: The values are not
-shared between connections. If another socket connects and tries to `GET`
-the `hello` key, it will not find anything.
+我们现在可以获取和设置值了，但是有一个问题：值没有在连接之间共享。如果另一个套接字连接并尝试 `GET` `hello` 键，它将找不到任何东西。
 
-You can find the full code [here][full].
+你可以在[这里][full]找到完整的代码。
 
-In the next section, we will implement persisting data for all sockets.
+在下一节中，我们将实现为所有套接字持久化数据。
 
 [full]: https://github.com/tokio-rs/website/blob/master/tutorial-code/spawning/src/main.rs

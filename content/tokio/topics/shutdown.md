@@ -1,50 +1,46 @@
 ---
-title: "Graceful Shutdown"
+title: "优雅关闭"
 ---
 
-The purpose of this page is to give an overview of how to properly implement
-shutdown in asynchronous applications.
+本页的目的是概述如何在异步应用程序中正确实现关闭。
 
-There are usually three parts to implementing graceful shutdown:
+实现优雅关闭通常包括三个部分：
 
- * Figuring out when to shut down.
- * Telling every part of the program to shut down.
- * Waiting for other parts of the program to shut down.
+- 确定何时关闭。
+- 通知程序的每个部分进行关闭。
+- 等待程序的其他部分完成关闭。
 
-The rest of this article will go through these parts. A real world
-implementation of the approach described here can be found in [mini-redis],
-specifically the [`src/server.rs`][server.rs] and
-[`src/shutdown.rs`][shutdown.rs] files.
+本文的其余部分将详细介绍这些部分。此处描述的方法的真实世界实现可以在 [mini-redis] 中找到，
+特别是 [`src/server.rs`][server.rs] 和 [`src/shutdown.rs`][shutdown.rs] 文件。
 
-## Figuring out when to shut down
+## 确定何时关闭
 
-This will of course depend on the application, but one very common shutdown
-criteria is when the application receives a signal from the operating system.
-This happens e.g. when you press ctrl+c in the terminal while the program is
-running. To detect this, Tokio provides a [`tokio::signal::ctrl_c`][ctrl_c]
-function, which will sleep until such a signal is received. You might use it
-like this:
+这当然取决于应用程序，但一个非常常见的关闭标准是当应用程序收到来自操作系统的信号时。
+例如，当程序在终端中运行时，您按下了 ctrl+c 就会发生这种情况。为了检测这一点，Tokio 提供了一个
+[`tokio::signal::ctrl_c`][ctrl_c] 函数，该函数将休眠直到收到这样的信号。您可以这样使用它：
+
 ```rs
 use tokio::signal;
 
 #[tokio::main]
 async fn main() {
-    // ... spawn application as separate task ...
+    // ... 将应用程序生成为单独的任务 ...
 
     match signal::ctrl_c().await {
         Ok(()) => {},
         Err(err) => {
-            eprintln!("Unable to listen for shutdown signal: {}", err);
-            // we also shut down in case of error
+            eprintln!("无法监听关闭信号: {}", err);
+            // 如果出错，我们也关闭
         },
     }
 
-    // send shutdown signal to application and wait
+    // 向应用程序发送关闭信号并等待
 }
 ```
-If you have multiple shutdown conditions, you can use [an mpsc channel][mpsc]
-to send the shutdown signal to one place. You can then [select] on
-[`ctrl_c`][ctrl_c] and the channel. For example:
+
+如果您有多个关闭条件，您可以使用 [mpsc 通道][mpsc] 将关闭信号发送到一个地方。
+然后，您可以在 [`ctrl_c`][ctrl_c] 和该通道上使用 [select]。例如：
+
 ```rs
 use tokio::signal;
 use tokio::sync::mpsc;
@@ -53,89 +49,79 @@ use tokio::sync::mpsc;
 async fn main() {
     let (shutdown_send, mut shutdown_recv) = mpsc::unbounded_channel();
 
-    // ... spawn application as separate task ...
+    // ... 将应用程序生成为单独的任务 ...
     //
-    // application uses shutdown_send in case a shutdown was issued from inside
-    // the application
+    // 如果从应用程序内部发出关闭，应用程序会使用 shutdown_send
 
     tokio::select! {
         _ = signal::ctrl_c() => {},
         _ = shutdown_recv.recv() => {},
     }
 
-    // send shutdown signal to application and wait
+    // 向应用程序发送关闭信号并等待
 }
 ```
 
-## Telling things to shut down
+## 通知任务进行关闭
 
-When you want to tell one or more tasks to shut down, you can use [Cancellation
-Tokens][cancellation-tokens]. These tokens allow you to notify tasks that they
-should terminate themselves in response to a cancellation request, making it
-easy to implement graceful shutdowns.
+当您想告诉一个或多个任务关闭时，您可以使用 [取消令牌 (Cancellation Tokens)][cancellation-tokens]。
+这些令牌允许您通知任务它们应根据取消请求自行终止，从而轻松实现优雅关闭。
 
-To share a `CancellationToken` between several tasks, you must clone it. This is due
-to the single ownership rule that requires that each value has a single owner. When
-cloning a token, you get another token that's indistinguishable from the original;
-if one is cancelled, then the other is also cancelled. You can make as many clones
-as you need, and when you call `cancel` on one of them, they're all cancelled.
+要在多个任务之间共享 `CancellationToken`，您必须克隆它。这是由于单一所有权规则要求每个值只有一个所有者。
+当克隆令牌时，您会得到另一个与原始令牌无法区分的令牌；如果一个被取消，那么另一个也被取消。
+您可以根据需要创建任意数量的克隆，并且当您在其中一个上调用 `cancel` 时，它们都会被取消。
 
-Here are the steps to use `CancellationToken` in multiple tasks:
+以下是在多个任务中使用 `CancellationToken` 的步骤：
 
-1. First, create a new `CancellationToken`.
-2. Then, create a clone of the original `CancellationToken` by calling the `clone` method on the original token. This will create a new token that can be used by another task.
-3. Pass the original or cloned token to the tasks that should respond to cancellation requests.
-4. When you want to shut down the tasks gracefully, call the `cancel` method on the original or cloned token. Any task listening to the cancellation request on the original or cloned token will be notified to shut down.
+1. 首先，创建一个新的 `CancellationToken`。
+2. 然后，通过调用原始令牌上的 `clone` 方法创建原始 `CancellationToken` 的克隆。这将创建一个可供其他任务使用的新令牌。
+3. 将原始令牌或克隆令牌传递给应该响应取消请求的任务。
+4. 当您想优雅地关闭任务时，在原始令牌或克隆令牌上调用 `cancel` 方法。任何在原始令牌或克隆令牌上监听取消请求的任务都将收到关闭通知。
 
-Here is code snippet showcasing the above mentioned steps:
+以下是展示上述步骤的代码片段：
 
 ```rs
-// Step 1: Create a new CancellationToken
+// 步骤 1：创建一个新的 CancellationToken
 let token = CancellationToken::new();
 
-// Step 2: Clone the token for use in another task
+// 步骤 2：克隆令牌以供另一个任务使用
 let cloned_token = token.clone();
 
-// Task 1 - Wait for token cancellation or a long time
+// 任务 1 - 等待令牌取消或很长时间
 let task1_handle = tokio::spawn(async move {
     tokio::select! {
-        // Step 3: Using cloned token to listen to cancellation requests
+        // 步骤 3：使用克隆的令牌来监听取消请求
         _ = cloned_token.cancelled() => {
-            // The token was cancelled, task can shut down
+            // 令牌已被取消，任务可以关闭
         }
         _ = tokio::time::sleep(std::time::Duration::from_secs(9999)) => {
-            // Long work has completed
+            // 长时间的工作已完成
         }
     }
 });
 
-// Task 2 - Cancel the original token after a small delay
+// 任务 2 - 在短暂延迟后取消原始令牌
 tokio::spawn(async move {
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-    // Step 4: Cancel the original or cloned token to notify other tasks about shutting down gracefully
+    // 步骤 4：取消原始或克隆的令牌，以通知其他任务优雅地关闭
     token.cancel();
 });
 
-// Wait for tasks to complete
+// 等待任务完成
 task1_handle.await.unwrap()
 ```
 
-With Cancellation Tokens, you don't have to shut down a task immediately when
-the token is cancelled. Instead, you can run a shutdown procedure before
-terminating the task, such as flushing data to a file or database, or sending
-a shutdown message on a connection.
+使用取消令牌，您不必在令牌被取消时立即关闭任务。相反，您可以在终止任务之前运行关闭程序，
+例如将数据刷新到文件或数据库，或者在连接上发送关闭消息。
 
-## Waiting for things to finish shutting down
+## 等待事物完成关闭
 
-Once you have told other tasks to shut down, you will need to wait for them to
-finish. One easy way to do so is to use a [task tracker]. A task tracker is a
-collection of tasks. The [`wait`] method of the task tracker gives you a future
-which resolves only after all of its contained futures have resolved **and**
-the task tracker has been closed.
+一旦您通知其他任务关闭，您将需要等待它们完成。一个简单的方法是使用 [任务跟踪器 (task tracker)]。
+任务跟踪器是任务的集合。任务跟踪器的 [`wait`] 方法为您提供一个 future，
+该 future 仅在其包含的所有 future 都已解析 **并且** 任务跟踪器已关闭后才会解析。
 
-The following example will spawn 10 tasks, then use a task tracker to wait for
-them to shut down.
+以下示例将生成 10 个任务，然后使用任务跟踪器等待它们关闭。
 
 ```rs
 use std::time::Duration;
@@ -150,10 +136,10 @@ async fn main() {
         tracker.spawn(some_operation(i));
     }
 
-    // Once we spawned everything, we close the tracker.
+    // 一旦我们生成了所有任务，我们就关闭跟踪器。
     tracker.close();
 
-    // Wait for everything to finish.
+    // 等待一切完成。
     tracker.wait().await;
 
     println!("This is printed after all of the tasks.");

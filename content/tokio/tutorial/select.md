@@ -1,17 +1,15 @@
 ---
-title: "Select"
+title: "选择 (Select)"
 ---
 
-So far, when we wanted to add concurrency to the system, we spawned a new task.
-We will now cover some additional ways to concurrently execute asynchronous code
-with Tokio.
+到目前为止，当我们想在系统中添加并发时，我们会生成一个新任务。
+现在我们将介绍一些使用 Tokio 并发执行异步代码的其他方法。
 
 # `tokio::select!`
 
-The `tokio::select!` macro allows waiting on multiple async computations and
-returns when a **single** computation completes.
+`tokio::select!` 宏允许等待多个异步计算，并在**单个**计算完成时返回。
 
-For example:
+例如：
 
 ```rust
 use tokio::sync::oneshot;
@@ -40,38 +38,23 @@ async fn main() {
 }
 ```
 
-Two oneshot channels are used. Either channel could complete first. The
-`select!` statement awaits on both channels and binds `val` to the value
-returned by the task. When either `tx1` or `tx2` complete, the associated block
-is executed.
+这里使用了两个 oneshot 通道。任一通道都可能先完成。`select!` 语句会等待这两个通道，并将 `val` 绑定到任务返回的值。当 `tx1` 或 `tx2` 完成时，相关的代码块就会执行。
 
-The branch that **does not** complete is dropped. In the example, the
-computation is awaiting the `oneshot::Receiver` for each channel. The
-`oneshot::Receiver` for the channel that did not complete yet is dropped.
+**未**完成的分支将被丢弃。在此示例中，计算正在等待每个通道的 `oneshot::Receiver`。尚未完成的那个通道的 `oneshot::Receiver` 将被丢弃。
 
-## Cancellation
+## 取消 (Cancellation)
 
-With asynchronous Rust, cancellation is performed by dropping a future. Recall
-from ["Async in depth"][async], async Rust operation are implemented using
-futures and futures are lazy. The operation only proceeds when the future is
-polled. If the future is dropped, the operation cannot proceed because all
-associated state has been dropped.
+在异步 Rust 中，取消是通过丢弃 future 来执行的。回想一下[“深入异步 (Async in depth)”][async]中的内容，异步 Rust 操作是使用 future 实现的，并且 future 是惰性的。只有当 future 被轮询时，操作才会继续进行。如果 future 被丢弃，操作就无法继续，因为所有相关的状态都已被丢弃。
 
-That said, sometimes an asynchronous operation will spawn background tasks or
-start other operation that run in the background. For example, in the above
-example, a task is spawned to send a message back. Usually, the task will
-perform some computation to generate the value.
+也就是说，有时异步操作会生成后台任务或启动其他在后台运行的操作。例如，在上面的示例中，生成了一个任务来回送消息。通常，该任务会执行一些计算来生成值。
 
-Futures or other types can implement `Drop` to cleanup background resources.
-Tokio's `oneshot::Receiver` implements `Drop` by sending a closed notification to
-the `Sender` half. The sender half can receive this notification and abort the
-in-progress operation by dropping it.
+Future 或其他类型可以实现 `Drop` 来清理后台资源。Tokio 的 `oneshot::Receiver` 通过向 `Sender` 半部分发送一个关闭通知来实现 `Drop`。发送者半部分可以接收此通知，并通过丢弃它来中止正在进行的操作。
 
 ```rust
 use tokio::sync::oneshot;
 
 async fn some_operation() -> String {
-    // Compute value here
+    // 在此处计算值
 # "wut".to_string()
 }
 
@@ -81,15 +64,15 @@ async fn main() {
     let (tx2, rx2) = oneshot::channel();
 
     tokio::spawn(async {
-        // Select on the operation and the oneshot's
-        // `closed()` notification.
+        // 在操作和 oneshot 的
+        // `closed()` 通知之间进行选择。
         tokio::select! {
             val = some_operation() => {
                 let _ = tx1.send(val);
             }
             _ = tx1.closed() => {
-                // `some_operation()` is canceled, the
-                // task completes and `tx1` is dropped.
+                // `some_operation()` 被取消，
+                // 任务完成，`tx1` 被丢弃。
             }
         }
     });
@@ -109,14 +92,11 @@ async fn main() {
 }
 ```
 
-[async]: async
+[async]: async.md
 
-## The `Future` implementation
+## `Future` 实现 (The `Future` implementation)
 
-To help better understand how `select!` works, let's look at what a hypothetical
-`Future` implementation would look like. This is a simplified version. In
-practice, `select!` includes additional functionality like randomly selecting
-the branch to poll first.
+为了帮助更好地理解 `select!` 的工作原理，让我们看一下假设的 `Future` 实现会是什么样子。这是一个简化版本。在实践中，`select!` 包含额外的功能，例如随机选择要首先轮询的分支。
 
 ```rust
 use tokio::sync::oneshot;
@@ -152,7 +132,7 @@ async fn main() {
     let (tx1, rx1) = oneshot::channel();
     let (tx2, rx2) = oneshot::channel();
 
-    // use tx1 and tx2
+    // 使用 tx1 和 tx2
 # tx1.send("one").unwrap();
 # tx2.send("two").unwrap();
 
@@ -163,52 +143,31 @@ async fn main() {
 }
 ```
 
-The `MySelect` future contains the futures from each branch. When `MySelect` is
-polled, the first branch is polled. If it is ready, the value is used and
-`MySelect` completes. After `.await` receives the output from a future, the
-future is dropped. This results in the futures for both branches to be dropped.
-As one branch did not complete, the operation is effectively cancelled.
+`MySelect` future 包含来自每个分支的 future。当轮询 `MySelect` 时，首先轮询第一个分支。如果它就绪了，则使用该值，`MySelect` 完成。在 `.await` 接收到 future 的输出后，该 future 会被丢弃。这会导致两个分支的 future 都被丢弃。由于一个分支没有完成，该操作实际上被取消了。
 
-Remember from the previous section:
+请记住上一节中的内容：
 
-> When a future returns `Poll::Pending`, it **must** ensure the waker is
-> signalled at some point in the future. Forgetting to do this results in the
-> task hanging indefinitely.
+> 当 future 返回 `Poll::Pending` 时，它**必须**确保唤醒器 (waker) 在未来的某个时刻被触发。忘记这样做会导致任务无限期挂起。
 
-There is no explicit usage of the `Context` argument in the `MySelect`
-implementation. Instead, the waker requirement is met by passing `cx` to the
-inner futures. As the inner future must also meet the waker requirement, by only
-returning `Poll::Pending` when receiving `Poll::Pending` from an inner future,
-`MySelect` also meets the waker requirement.
+在 `MySelect` 实现中没有显式使用 `Context` 参数。相反，唤醒器要求是通过将 `cx` 传递给内部 future 来满足的。由于内部 future 也必须满足唤醒器要求，只有当从内部 future 接收到 `Poll::Pending` 时才返回 `Poll::Pending`，`MySelect` 也满足了唤醒器要求。
 
-# Syntax
+# 语法 (Syntax)
 
-The `select!` macro can handle more than two branches. The current limit is 64
-branches. Each branch is structured as:
+`select!` 宏可以处理两个以上的分支。目前的限制是 64 个分支。每个分支的结构如下：
 
 ```text
 <pattern> = <async expression> => <handler>,
 ```
 
-When the `select` macro is evaluated, all the `<async expression>`s are
-aggregated and executed concurrently. When an expression completes, the result
-is matched against `<pattern>`. If the result matches the pattern, then all
-remaining async expressions are dropped and `<handler>` is executed. The
-`<handler>` expression has access to any bindings established by `<pattern>`.
+当 `select` 宏被求值时，所有的 `<async expression>` 都会被聚合并并发执行。当一个表达式完成时，其结果会与 `<pattern>` 进行匹配。如果结果与模式匹配，则所有剩余的异步表达式都将被丢弃，并执行 `<handler>`。`<handler>` 表达式可以访问由 `<pattern>` 建立的任何绑定。
 
-The basic case for `<pattern>` is a variable name, the result of the async
-expression is bound to the variable name and `<handler>` has access to that
-variable. This is why, in the original example, `val` was used for `<pattern>`
-and `<handler>` was able to access `val`.
+`<pattern>` 的基本情况是一个变量名，异步表达式的结果将绑定到该变量名，并且 `<handler>` 可以访问该变量。这就是为什么在最初的示例中，`val` 被用作 `<pattern>`，而 `<handler>` 能够访问 `val`。
 
-If `<pattern>` **does not** match the result of the async computation, then the
-remaining async expressions continue to execute concurrently until the next one
-completes. At this time, the same logic is applied to that result.
+如果 `<pattern>` **不**匹配异步计算的结果，则剩余的异步表达式继续并发执行，直到下一个完成。此时，将相同的逻辑应用于该结果。
 
-Because `select!` takes any async expression, it is possible to define more
-complicated computations to select on.
+因为 `select!` 接受任何异步表达式，所以可以定义更复杂的计算来进行选择。
 
-Here, we select on the output of a `oneshot` channel and a TCP connection.
+在这里，我们选择一个 `oneshot` 通道的输出和一个 TCP 连接。
 
 ```rust
 use tokio::net::TcpStream;
@@ -218,7 +177,7 @@ use tokio::sync::oneshot;
 async fn main() {
     let (tx, rx) = oneshot::channel();
 
-    // Spawn a task that sends a message over the oneshot
+    // 生成一个通过 oneshot 发送消息的任务
     tokio::spawn(async move {
         tx.send("done").unwrap();
     });
@@ -234,7 +193,7 @@ async fn main() {
 }
 ```
 
-Here, we select on a oneshot and accepting sockets from a `TcpListener`.
+在这里，我们选择一个 oneshot 和从 `TcpListener` 接受套接字。
 
 ```rust
 use tokio::net::TcpListener;
@@ -258,7 +217,7 @@ async fn main() -> io::Result<()> {
                 tokio::spawn(async move { process(socket) });
             }
 
-            // Help the rust type inferencer out
+            // 帮助 Rust 类型推断器
             Ok::<_, io::Error>(())
         } => {}
         _ = rx => {
@@ -271,22 +230,20 @@ async fn main() -> io::Result<()> {
 # async fn process(_: tokio::net::TcpStream) {}
 ```
 
-The accept loop runs until an error is encountered or `rx` receives a value. The
-`_` pattern indicates that we have no interest in the return value of the async
-computation.
+接受循环会一直运行，直到遇到错误或 `rx` 接收到一个值。`_` 模式表示我们对异步计算的返回值不感兴趣。
 
-# Return value
+# 返回值 (Return value)
 
-The `tokio::select!` macro returns the result of the evaluated `<handler>` expression.
+`tokio::select!` 宏返回被求值的 `<handler>` 表达式的结果。
 
 ```rust
 async fn computation1() -> String {
-    // .. computation
+    // .. 计算
 # unimplemented!();
 }
 
 async fn computation2() -> String {
-    // .. computation
+    // .. 计算
 # unimplemented!();
 }
 
@@ -303,18 +260,11 @@ async fn main() {
 # }
 ```
 
-Because of this, it is required that the `<handler>` expression for **each**
-branch evaluates to the same type. If the output of a `select!` expression is
-not needed, it is good practice to have the expression evaluate to `()`.
+因此，要求**每个**分支的 `<handler>` 表达式求值为相同的类型。如果 `select!` 表达式的输出不需要，一个好的做法是让表达式求值为 `()`。
 
-# Errors
+# 错误 (Errors)
 
-Using the `?` operator propagates the error from the expression. How this works
-depends on whether `?` is used from an async expression or from a handler.
-Using `?` in an async expression propagates the error out of the async
-expression. This makes the output of the async expression a `Result`. Using `?`
-from a handler immediately propagates the error out of the `select!` expression.
-Let's look at the accept loop example again:
+使用 `?` 运算符会传播表达式中的错误。其工作原理取决于 `?` 是在异步表达式中还是在处理程序中使用。在异步表达式中使用 `?` 会将错误传播到该异步表达式之外。这使得异步表达式的输出成为一个 `Result`。在处理程序中使用 `?` 会立即将错误传播到 `select!` 表达式之外。让我们再看一下接受循环的例子：
 
 ```rust
 use tokio::net::TcpListener;
@@ -323,7 +273,7 @@ use std::io;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    // [setup `rx` oneshot channel]
+    // [设置 `rx` oneshot 通道]
 # let (tx, rx) = oneshot::channel();
 # tx.send(()).unwrap();
 
@@ -336,7 +286,7 @@ async fn main() -> io::Result<()> {
                 tokio::spawn(async move { process(socket) });
             }
 
-            // Help the rust type inferencer out
+            // 帮助 Rust 类型推断器
             Ok::<_, io::Error>(())
         } => {
             res?;
@@ -351,22 +301,17 @@ async fn main() -> io::Result<()> {
 # async fn process(_: tokio::net::TcpStream) {}
 ```
 
-Notice `listener.accept().await?`. The `?` operator propagates the error out of
-that expression and to the `res` binding. On an error, `res` will be set to
-`Err(_)`. Then, in the handler, the `?` operator is used again. The `res?`
-statement will propagate an error out of the `main` function.
+注意 `listener.accept().await?`。`?` 运算符将错误从该表达式传播出去，并传播到 `res` 绑定。如果发生错误，`res` 将被设置为 `Err(_)`。然后，在处理程序中，再次使用了 `?` 运算符。`res?` 语句会将错误传播到 `main` 函数之外。
 
-# Pattern matching
+# 模式匹配 (Pattern matching)
 
-Recall that the `select!` macro branch syntax was defined as:
+回想一下，`select!` 宏分支语法定义为：
 
 ```text
 <pattern> = <async expression> => <handler>,
 ```
 
-So far, we have only used variable bindings for `<pattern>`. However, any Rust
-pattern can be used. For example, say we are receiving from multiple MPSC
-channels, we might do something like this:
+到目前为止，我们只对 `<pattern>` 使用了变量绑定。但是，可以使用任何 Rust 模式。例如，假设我们正在从多个 MPSC 通道接收，我们可能会这样做：
 
 ```rust
 use tokio::sync::mpsc;
@@ -377,7 +322,7 @@ async fn main() {
     let (mut tx2, mut rx2) = mpsc::channel(128);
 
     tokio::spawn(async move {
-        // Do something w/ `tx1` and `tx2`
+        // 用 `tx1` 和 `tx2` 做点什么
 # tx1.send(1).await.unwrap();
 # tx2.send(2).await.unwrap();
     });
@@ -396,26 +341,15 @@ async fn main() {
 }
 ```
 
-In this example, the `select!` expression waits on receiving a value from `rx1`
-and `rx2`. If a channel closes, `recv()` returns `None`. This **does not** match
-the pattern and the branch is disabled. The `select!` expression will continue
-waiting on the remaining branches.
+在此示例中，`select!` 表达式等待从 `rx1` 和 `rx2` 接收值。如果一个通道关闭，`recv()` 返回 `None`。这**不**匹配该模式，因此该分支被禁用。`select!` 表达式将继续等待剩余的分支。
 
-Notice that this `select!` expression includes an `else` branch. The `select!`
-expression must evaluate to a value. When using pattern matching, it is possible
-that **none** of the branches match their associated patterns. If this happens,
-the `else` branch is evaluated.
+请注意，这个 `select!` 表达式包含一个 `else` 分支。`select!` 表达式必须求值为一个值。当使用模式匹配时，可能**没有**分支匹配其关联的模式。如果发生这种情况，则求值 `else` 分支。
 
-# Borrowing
+# 借用 (Borrowing)
 
-When spawning tasks, the spawned async expression must own all of its data. The
-`select!` macro does not have this limitation. Each branch's async expression
-may borrow data and operate concurrently. Following Rust's borrow rules,
-multiple async expressions may immutably borrow a single piece of data **or** a
-single async expression may mutably borrow a piece of data.
+当生成任务时，生成的异步表达式必须拥有其所有数据。`select!` 宏没有此限制。每个分支的异步表达式都可以借用数据并并发操作。遵循 Rust 的借用规则，多个异步表达式可以不可变地借用单份数据**或者**单个异步表达式可以可变地借用一份数据。
 
-Let's look at some examples. Here, we simultaneously send the same data to two
-different TCP destinations.
+让我们看一些例子。在这里，我们同时将相同的数据发送到两个不同的 TCP 目标。
 
 ```rust
 use tokio::io::AsyncWriteExt;
@@ -447,16 +381,11 @@ async fn race(
 # fn main() {}
 ```
 
-The `data` variable is being borrowed **immutably** from both async expressions.
-When one of the operations completes successfully, the other one is dropped.
-Because we pattern match on `Ok(_)`, if an expression fails, the other one
-continues to execute.
+`data` 变量正从两个异步表达式中**不可变地**借用。当其中一个操作成功完成时，另一个被丢弃。因为我们模式匹配 `Ok(_)`，如果一个表达式失败，另一个会继续执行。
 
-When it comes to each branch's `<handler>`, `select!` guarantees that only a
-single `<handler>` runs. Because of this, each `<handler>` may mutably borrow
-the same data.
+当涉及到每个分支的 `<handler>` 时，`select!` 保证只运行单个 `<handler>`。因此，每个 `<handler>` 都可以可变地借用相同的数据。
 
-For example this modifies `out` in both handlers:
+例如，这会在两个处理程序中修改 `out`：
 
 ```rust
 use tokio::sync::oneshot;
@@ -469,7 +398,7 @@ async fn main() {
     let mut out = String::new();
 
     tokio::spawn(async move {
-        // Send values on `tx1` and `tx2`.
+        // 在 `tx1` 和 `tx2` 上发送值。
 # let _ = tx1.send("one");
 # let _ = tx2.send("two");
     });
@@ -487,11 +416,9 @@ async fn main() {
 }
 ```
 
-# Loops
+# 循环 (Loops)
 
-The `select!` macro is often used in loops. This section will go over some
-examples to show common ways of using the `select!` macro in a loop. We start
-by selecting over multiple channels:
+`select!` 宏经常用在循环中。本节将通过一些示例来展示在循环中使用 `select!` 宏的常见方式。我们从选择多个通道开始：
 
 ```rust
 use tokio::sync::mpsc;
@@ -519,50 +446,33 @@ async fn main() {
 }
 ```
 
-This example selects over the three channel receivers. When a message is
-received on any channel, it is written to STDOUT. When a channel is closed,
-`recv()` returns with `None`. By using pattern matching, the `select!`
-macro continues waiting on the remaining channels. When all channels are
-closed, the `else` branch is evaluated and the loop is terminated.
+此示例在三个通道接收者之间进行选择。当在任何通道上接收到消息时，它会被写入 STDOUT。当一个通道关闭时，`recv()` 返回 `None`。通过使用模式匹配，`select!` 宏会继续等待剩余的通道。当所有通道都关闭时，将求值 `else` 分支并终止循环。
 
-The `select!` macro randomly picks branches to check first for readiness. When
-multiple channels have pending values, a random channel will be picked to
-receive from. This is to handle the case where the receive loop processes
-messages slower than they are pushed into the channels, meaning that the
-channels start to fill up. If `select!` **did not** randomly pick a branch
-to check first, on each iteration of the loop, `rx1` would be checked first. If
-`rx1` always contained a new message, the remaining channels would never be
-checked.
+`select!` 宏随机选择分支以首先检查是否就绪。当多个通道有待处理的消息时，将随机选择一个通道进行接收。这是为了处理接收循环处理消息的速度慢于消息推入通道速度的情况，这意味着通道开始填满。如果 `select!` **没有**随机选择一个分支首先检查，则在循环的每次迭代中，会首先检查 `rx1`。如果 `rx1` 总是包含新消息，则永远不会检查剩余的通道。
 
-> **info**
-> If when `select!` is evaluated, multiple channels have pending messages, only
-> one channel has a value popped. All other channels remain untouched, and their
-> messages stay in those channels until the next loop iteration. No messages are
-> lost.
+> **信息**
+> 如果在求值 `select!` 时，多个通道有待处理的消息，则只有一个通道的值会被弹出。所有其他通道保持不变，它们的消息会留在这些通道中，直到下一次循环迭代。不会丢失任何消息。
 
-## Resuming an async operation
+## 恢复异步操作 (Resuming an async operation)
 
-Now we will show how to run an asynchronous operation across multiple calls to
-`select!`. In this example, we have an MPSC channel with item type `i32`, and an
-asynchronous function. We want to run the asynchronous function until it
-completes or an even integer is received on the channel.
+现在我们将展示如何在多次调用 `select!` 之间运行异步操作。在此示例中，我们有一个项目类型为 `i32` 的 MPSC 通道和一个异步函数。我们想运行该异步函数，直到它完成或在通道上接收到一个偶数整数。
 
 ```rust
 async fn action() {
-    // Some asynchronous logic
+    // 一些异步逻辑
 }
 
 #[tokio::main]
 async fn main() {
-    let (mut tx, mut rx) = tokio::sync::mpsc::channel(128);    
+    let (mut tx, mut rx) = tokio::sync::mpsc::channel(128);
 #   tokio::spawn(async move {
 #       let _ = tx.send(1).await;
 #       let _ = tx.send(2).await;
 #   });
-    
+
     let operation = action();
     tokio::pin!(operation);
-    
+
     loop {
         tokio::select! {
             _ = &mut operation => break,
@@ -576,24 +486,15 @@ async fn main() {
 }
 ```
 
-Note how, instead of calling `action()` in the `select!` macro, it is called
-**outside** the loop. The return of `action()` is assigned to `operation`
-**without** calling `.await`. Then we call `tokio::pin!` on `operation`.
+请注意，不是在 `select!` 宏中调用 `action()`，而是在循环**外部**调用。`action()` 的返回值被赋给 `operation`，**没有**调用 `.await`。然后我们在 `operation` 上调用 `tokio::pin!`。
 
-Inside the `select!` loop, instead of passing in `operation`, we pass in `&mut
-operation`. The `operation` variable is tracking the in-flight asynchronous
-operation. Each iteration of the loop uses the same operation instead of issuing
-a new call to `action()`.
+在 `select!` 循环内部，我们传入 `&mut operation` 而不是 `operation`。`operation` 变量正在跟踪正在进行的异步操作。循环的每次迭代都使用相同的操作，而不是发出对 `action()` 的新调用。
 
-The other `select!` branch receives a message from the channel. If the message
-is even, we are done looping. Otherwise, start the `select!` again.
+另一个 `select!` 分支从通道接收消息。如果消息是偶数，我们就结束循环。否则，再次启动 `select!`。
 
-This is the first time we use `tokio::pin!`. We aren't going to get into the
-details of pinning yet. The thing to note is that, to `.await` a reference,
-the value being referenced must be pinned or implement `Unpin`.
+这是我们第一次使用 `tokio::pin!`。我们现在不打算深入探讨固定的细节。需要注意的是，要对引用进行 `.await`，被引用的值必须被固定 (pinned) 或实现 `Unpin`。
 
-If we remove the `tokio::pin!` line and try to compile, we get the following
-error:
+如果我们移除 `tokio::pin!` 行并尝试编译，会得到以下错误：
 
 ```text
 error[E0599]: no method named `poll` found for struct
@@ -618,56 +519,52 @@ error[E0599]: no method named `poll` found for struct
            `&mut impl std::future::Future: std::future::Future`
 ```
 
-Although we covered `Future` in [the previous chapter][async], this error still isn't
-very clear. If you hit such an error about `Future` not being implemented when attempting
-to call `.await` on a **reference**, then the future probably needs to be pinned.
+尽管我们在[上一章][async.md]中介绍了 `Future`，但这个错误仍然不是很清楚。如果你在尝试对**引用**调用 `.await` 时遇到关于 `Future` 未实现的此类错误，那么该 future 可能需要被固定。
 
-Read more about [`Pin`][pin] on the [standard library][pin].
+在[标准库][pin]上阅读有关 [`Pin`][pin] 的更多信息。
 
 [pin]: https://doc.rust-lang.org/std/pin/index.html
 
-## Modifying a branch
+## 修改分支 (Modifying a branch)
 
-Let's look at a slightly more complicated loop. We have:
+让我们看一个稍微复杂一点的循环。我们有：
 
-1. A channel of `i32` values.
-2. An async operation to perform on `i32` values.
+1. 一个 `i32` 值的通道。
+2. 一个要对 `i32` 值执行的异步操作。
 
-The logic we want to implement is:
+我们想要实现的逻辑是：
 
-1. Wait for an **even** number on the channel.
-2. Start the asynchronous operation using the even number as input.
-3. Wait for the operation, but at the same time listen for more even numbers on
-   the channel.
-4. If a new even number is received before the existing operation completes,
-   abort the existing operation and start it over with the new even number.
+1. 等待通道上的一个**偶数**。
+2. 使用该偶数作为输入启动异步操作。
+3. 等待该操作，但同时监听通道上是否有新的偶数。
+4. 如果在现有操作完成之前接收到新的偶数，则中止现有操作并使用新的偶数重新开始。
 
 ```rust
 async fn action(input: Option<i32>) -> Option<String> {
-    // If the input is `None`, return `None`.
-    // This could also be written as `let i = input?;`
+    // 如果输入是 `None`，则返回 `None`。
+    // 这也可以写成 `let i = input?;`
     let i = match input {
         Some(input) => input,
         None => return None,
     };
-    // async logic here
+    // 此处的异步逻辑
 #   Some(i.to_string())
 }
 
 #[tokio::main]
 async fn main() {
     let (mut tx, mut rx) = tokio::sync::mpsc::channel(128);
-    
+
     let mut done = false;
     let operation = action(None);
     tokio::pin!(operation);
-    
+
     tokio::spawn(async move {
         let _ = tx.send(1).await;
         let _ = tx.send(3).await;
         let _ = tx.send(2).await;
     });
-    
+
     loop {
         tokio::select! {
             res = &mut operation, if !done => {
@@ -680,7 +577,7 @@ async fn main() {
             }
             Some(v) = rx.recv() => {
                 if v % 2 == 0 {
-                    // `.set` is a method on `Pin`.
+                    // `.set` 是 `Pin` 上的一个方法。
                     operation.set(action(Some(v)));
                     done = false;
                 }
@@ -690,52 +587,23 @@ async fn main() {
 }
 ```
 
-We use a similar strategy as the previous example. The async fn is called
-outside of the loop and assigned to `operation`. The `operation` variable is
-pinned. The loop selects on both `operation` and the channel receiver.
+我们使用了与上一个示例类似的策略。异步函数在循环外部调用并赋给 `operation`。`operation` 变量被固定。循环在 `operation` 和通道接收者之间进行选择。
 
-Notice how `action` takes `Option<i32>` as an argument. Before we receive the
-first even number, we need to instantiate `operation` to something. We make
-`action` take `Option` and return `Option`. If `None` is passed in, `None` is
-returned. The first loop iteration, `operation` completes immediately with
-`None`.
+请注意 `action` 如何将 `Option<i32>` 作为参数。在我们收到第一个偶数之前，我们需要将 `operation` 实例化为某个东西。我们让 `action` 接受 `Option` 并返回 `Option`。如果传入 `None`，则返回 `None`。第一次循环迭代时，`operation` 立即以 `None` 完成。
 
-This example uses some new syntax. The first branch includes `, if !done`. This
-is a branch precondition. Before explaining how it works, let's look at what
-happens if the precondition is omitted. Leaving out `, if !done` and running the
-example results in the following output:
+此示例使用了一些新语法。第一个分支包含 `, if !done`。这是一个分支前提条件。在解释它如何工作之前，让我们看看如果省略前提条件会发生什么。省略 `, if !done` 并运行示例会产生以下输出：
 
 ```text
 thread 'main' panicked at '`async fn` resumed after completion', src/main.rs:1:55
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
 
-This error happens when attempting to use `operation` **after** it has already
-completed. Usually, when using `.await`, the value being awaited is consumed. In
-this example, we await on a reference. This means `operation` is still around
-after it has completed.
+当尝试在 `operation` **已经**完成后使用它时，会发生此错误。通常，当使用 `.await` 时，被等待的值会被消耗掉。在此示例中，我们在一个引用上等待。这意味着 `operation` 在完成后仍然存在。
 
-To avoid this panic, we must take care to disable the first branch if
-`operation` has completed. The `done` variable is used to track whether or not
-`operation` completed. A `select!` branch may include a **precondition**. This
-precondition is checked **before** `select!` awaits on the branch. If the
-condition evaluates to `false` then the branch is disabled. The `done` variable
-is initialized to `false`. When `operation` completes, `done` is set to `true`.
-The next loop iteration will disable the `operation` branch. When an even
-message is received from the channel, `operation` is reset and `done` is set to
-`false`.
+为避免这种 panic，我们必须小心地在 `operation` 完成时禁用第一个分支。`done` 变量用于跟踪 `operation` 是否已完成。`select!` 分支可能包含**前提条件 (precondition)**。此前提条件在 `select!` 等待分支**之前**进行检查。如果条件求值为 `false`，则该分支被禁用。`done` 变量初始化为 `false`。当 `operation` 完成时，`done` 被设置为 `true`。下一次循环迭代将禁用 `operation` 分支。当从通道接收到偶数消息时，`operation` 被重置，`done` 被设置为 `false`。
 
-# Per-task concurrency
+# 每任务并发 (Per-task concurrency)
 
-Both `tokio::spawn` and `select!` enable running concurrent asynchronous
-operations. However, the strategy used to run concurrent operations differs. The
-`tokio::spawn` function takes an asynchronous operation and spawns a new task to
-run it. A task is the object that the Tokio runtime schedules. Two different
-tasks are scheduled independently by Tokio. They may run simultaneously on
-different operating system threads. Because of this, a spawned task has the same
-restriction as a spawned thread: no borrowing.
+`tokio::spawn` 和 `select!` 都支持运行并发异步操作。但是，用于运行并发操作的策略不同。`tokio::spawn` 函数接受一个异步操作，并生成一个新任务来运行它。任务是 Tokio 运行时调度的对象。两个不同的任务由 Tokio 独立调度。它们可能同时在不同的操作系统线程上运行。因此，生成的任务与生成的线程具有相同的限制：不能借用。
 
-The `select!` macro runs all branches concurrently **on the same task**. Because
-all branches of the `select!` macro are executed on the same task, they will
-never run **simultaneously**. The `select!` macro multiplexes asynchronous
-operations on a single task.
+`select!` 宏在**同一任务**上并发运行所有分支。因为 `select!` 宏的所有分支都在同一任务上执行，所以它们永远不会**同时**运行。`select!` 宏在单个任务上多路复用异步操作。

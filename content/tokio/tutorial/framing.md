@@ -1,11 +1,8 @@
 ---
-title: "Framing"
+title: "组帧 (Framing)"
 ---
 
-We will now apply what we just learned about I/O and implement the Mini-Redis
-framing layer. Framing is the process of taking a byte stream and converting it
-to a stream of frames. A frame is a unit of data transmitted between two peers.
-The Redis protocol frame is defined as follows:
+我们现在将应用刚刚学到的关于 I/O 的知识，并实现 Mini-Redis 的组帧层 (framing layer)。组帧是将字节流转换为帧流 (stream of frames) 的过程。帧是在两个对等点 (peers) 之间传输的数据单元。Redis 协议帧定义如下：
 
 ```rust
 use bytes::Bytes;
@@ -20,10 +17,9 @@ enum Frame {
 }
 ```
 
-Note how the frame only consists of data without any semantics. The command
-parsing and implementation happen at a higher level.
+请注意，帧只包含数据，没有任何语义。命令解析和实现在更高的层次上进行。
 
-For HTTP, a frame might look like:
+对于 HTTP，帧可能看起来像这样：
 
 ```rust
 # use bytes::Bytes;
@@ -50,8 +46,7 @@ enum HttpFrame {
 }
 ```
 
-To implement framing for Mini-Redis, we will implement a `Connection` struct
-that wraps a `TcpStream` and reads/writes `mini_redis::Frame` values.
+为了实现 Mini-Redis 的组帧，我们将实现一个 `Connection` 结构体，它包装一个 `TcpStream` 并读/写 `mini_redis::Frame` 值。
 
 ```rust
 use tokio::net::TcpStream;
@@ -59,57 +54,48 @@ use mini_redis::{Frame, Result};
 
 struct Connection {
     stream: TcpStream,
-    // ... other fields here
+    // ... 此处的其他字段
 }
 
 impl Connection {
-    /// Read a frame from the connection.
-    /// 
-    /// Returns `None` if EOF is reached
+    /// 从连接中读取一个帧。
+    ///
+    /// 如果到达 EOF，则返回 `None`
     pub async fn read_frame(&mut self)
         -> Result<Option<Frame>>
     {
-        // implementation here
+        // 此处的实现
 # unimplemented!();
     }
 
-    /// Write a frame to the connection.
+    /// 将一个帧写入连接。
     pub async fn write_frame(&mut self, frame: &Frame)
         -> Result<()>
     {
-        // implementation here
+        // 此处的实现
 # unimplemented!();
     }
 }
 ```
 
-You can find the details of the Redis wire protocol [here][proto]. The full
-`Connection` code is found [here][full].
+你可以在[这里][proto]找到 Redis 线路协议的详细信息。完整的 `Connection` 代码在[这里][full]。
 
 [proto]: https://redis.io/topics/protocol
 [full]: https://github.com/tokio-rs/mini-redis/blob/tutorial/src/connection.rs
 
-# Buffered reads
+# 缓冲读取 (Buffered reads)
 
-The `read_frame` method waits for an entire frame to be received before
-returning. A single call to `TcpStream::read()` may return an arbitrary amount
-of data. It could contain an entire frame, a partial frame, or multiple frames.
-If a partial frame is received, the data is buffered and more data is read from
-the socket.  If multiple frames are received, the first frame is returned and
-the rest of the data is buffered until the next call to `read_frame`.
+`read_frame` 方法会等待接收到完整的帧后才返回。对 `TcpStream::read()` 的单次调用可能会返回任意数量的数据。它可能包含一个完整的帧、一个部分帧或多个帧。如果接收到部分帧，数据会被缓冲，并从套接字读取更多数据。如果接收到多个帧，则返回第一个帧，其余数据将被缓冲，直到下一次调用 `read_frame`。
 
-If you haven't already, create a new file called `connection.rs`.
+如果你还没有这样做，请创建一个名为 `connection.rs` 的新文件。
 
 ```bash
 touch src/connection.rs
 ```
 
-To implement this, `Connection` needs a read buffer field. Data is read from the
-socket into the read buffer. When a frame is parsed, the corresponding data is
-removed from the buffer.
+为了实现这一点，`Connection` 需要一个读缓冲区字段。数据从套接字读入读缓冲区。当解析帧时，相应的数据会从缓冲区中移除。
 
-We will use [`BytesMut`][BytesMutStruct] as the buffer type. This is a mutable version of
-[`Bytes`][BytesStruct].
+我们将使用 [`BytesMut`][BytesMutStruct] 作为缓冲区类型。这是 [`Bytes`][BytesStruct] 的可变版本。
 
 ```rust
 use bytes::BytesMut;
@@ -124,14 +110,14 @@ impl Connection {
     pub fn new(stream: TcpStream) -> Connection {
         Connection {
             stream,
-            // Allocate the buffer with 4kb of capacity.
+            // 分配容量为 4kb 的缓冲区。
             buffer: BytesMut::with_capacity(4096),
         }
     }
 }
 ```
 
-Next, we implement the `read_frame()` method.
+接下来，我们实现 `read_frame()` 方法。
 
 ```rust
 use tokio::io::AsyncReadExt;
@@ -148,23 +134,21 @@ pub async fn read_frame(&mut self)
     -> Result<Option<Frame>>
 {
     loop {
-        // Attempt to parse a frame from the buffered data. If
-        // enough data has been buffered, the frame is
-        // returned.
+        // 尝试从缓冲数据中解析一个帧。如果
+        // 缓冲了足够的数据，则返回该帧。
         if let Some(frame) = self.parse_frame()? {
             return Ok(Some(frame));
         }
 
-        // There is not enough buffered data to read a frame.
-        // Attempt to read more data from the socket.
+        // 缓冲区中没有足够的数据来读取一个帧。
+        // 尝试从套接字中读取更多数据。
         //
-        // On success, the number of bytes is returned. `0`
-        // indicates "end of stream".
+        // 成功时，返回读取的字节数。`0`
+        // 表示“流结束”。
         if 0 == self.stream.read_buf(&mut self.buffer).await? {
-            // The remote closed the connection. For this to be
-            // a clean shutdown, there should be no data in the
-            // read buffer. If there is, this means that the
-            // peer closed the socket while sending a frame.
+            // 远程端关闭了连接。为了这是一个
+            // 干净的关闭，读缓冲区中不应该有数据。
+            // 如果有，这意味着对等方在发送帧时关闭了套接字。
             if self.buffer.is_empty() {
                 return Ok(None);
             } else {
@@ -177,28 +161,18 @@ pub async fn read_frame(&mut self)
 # }
 ```
 
-Let's break this down. The `read_frame` method operates in a loop. First,
-`self.parse_frame()` is called. This will attempt to parse a redis frame from
-`self.buffer`. If there is enough data to parse a frame, the frame is returned
-to the caller of `read_frame()`.Otherwise, we attempt to read more data from the
-socket into the buffer. After reading more data, `parse_frame()` is called
-again. This time, if enough data has been received, parsing may succeed.
+让我们来分解一下。`read_frame` 方法在一个循环中操作。首先，调用 `self.parse_frame()`。这将尝试从 `self.buffer` 中解析一个 redis 帧。如果有足够的数据解析一个帧，该帧将返回给 `read_frame()` 的调用者。否则，我们尝试从套接字中将更多数据读入缓冲区。读取更多数据后，再次调用 `parse_frame()`。这一次，如果已接收到足够的数据，解析可能会成功。
 
-When reading from the stream, a return value of `0` indicates that no more data
-will be received from the peer. If the read buffer still has data in it, this
-indicates a partial frame has been received and the connection is being
-terminated abruptly. This is an error condition and `Err` is returned.
+当从流中读取时，返回值 `0` 表示不会再从对等方接收到更多数据。如果读缓冲区中仍有数据，这表示已接收到部分帧并且连接正在突然终止。这是一个错误情况，并返回 `Err`。
 
 [BytesMutStruct]: https://docs.rs/bytes/1/bytes/struct.BytesMut.html
 [BytesStruct]: https://docs.rs/bytes/1/bytes/struct.Bytes.html
 
-## The `Buf` trait
+## `Buf` trait (The `Buf` trait)
 
-When reading from the stream, `read_buf` is called. This version of the read
-function takes a value implementing [`BufMut`] from the [`bytes`] crate.
+当从流中读取时，会调用 `read_buf`。这个版本的 read 函数接受一个来自 [`bytes`] crate 的实现了 [`BufMut`] 的值。
 
-First, consider how we would implement the same read loop using `read()`.
-`Vec<u8>` could be used instead of `BytesMut`.
+首先，考虑我们如何使用 `read()` 来实现相同的读取循环。可以使用 `Vec<u8>` 代替 `BytesMut`。
 
 ```rust
 use tokio::net::TcpStream;
@@ -213,7 +187,7 @@ impl Connection {
     pub fn new(stream: TcpStream) -> Connection {
         Connection {
             stream,
-            // Allocate the buffer with 4kb of capacity.
+            // 分配容量为 4kb 的缓冲区。
             buffer: vec![0; 4096],
             cursor: 0,
         }
@@ -221,7 +195,7 @@ impl Connection {
 }
 ```
 
-And the `read_frame()` function on `Connection`:
+以及 `Connection` 上的 `read_frame()` 函数：
 
 ```rust
 use mini_redis::{Frame, Result};
@@ -241,14 +215,13 @@ pub async fn read_frame(&mut self)
             return Ok(Some(frame));
         }
 
-        // Ensure the buffer has capacity
+        // 确保缓冲区有容量
         if self.buffer.len() == self.cursor {
-            // Grow the buffer
+            // 增长缓冲区
             self.buffer.resize(self.cursor * 2, 0);
         }
 
-        // Read into the buffer, tracking the number
-        // of bytes read
+        // 读入缓冲区，跟踪读取的字节数
         let n = self.stream.read(
             &mut self.buffer[self.cursor..]).await?;
 
@@ -259,7 +232,7 @@ pub async fn read_frame(&mut self)
                 return Err("connection reset by peer".into());
             }
         } else {
-            // Update our cursor
+            // 更新我们的光标
             self.cursor += n;
         }
     }
@@ -268,49 +241,30 @@ pub async fn read_frame(&mut self)
 # }
 ```
 
-When working with byte arrays and `read`, we must also maintain a cursor
-tracking how much data has been buffered. We must make sure to pass the empty
-portion of the buffer to `read()`. Otherwise, we would overwrite buffered data.
-If our buffer gets filled up, we must grow the buffer in order to keep reading.
-In `parse_frame()` (not included), we would need to parse data contained by
-`self.buffer[..self.cursor]`.
+当使用字节数组和 `read` 时，我们还必须维护一个光标来跟踪已缓冲了多少数据。我们必须确保将缓冲区的空部分传递给 `read()`。否则，我们会覆盖缓冲的数据。如果我们的缓冲区被填满，我们必须增长缓冲区才能继续读取。在 `parse_frame()` 中（未包括），我们需要解析 `self.buffer[..self.cursor]` 中包含的数据。
 
-Because pairing a byte array with a cursor is very common, the `bytes` crate
-provides an abstraction representing a byte array and cursor. The `Buf` trait is
-implemented by types from which data can be read. The `BufMut` trait is
-implemented by types into which data can be written. When passing a `T: BufMut`
-to `read_buf()`, the buffer's internal cursor is automatically updated by
-`read_buf`. Because of this, in our version of `read_frame`, we do not need to
-manage our own cursor.
+因为将字节数组与光标配对非常普遍，所以 `bytes` crate 提供了一个表示字节数组和光标的抽象。`Buf` trait 由可以从中读取数据的类型实现。`BufMut` trait 由可以写入数据的类型实现。当将 `T: BufMut` 传递给 `read_buf()` 时，缓冲区的内部光标会由 `read_buf` 自动更新。因此，在我们的 `read_frame` 版本中，我们不需要管理自己的光标。
 
-Additionally, when using `Vec<u8>`, the buffer must be **initialized**. `vec![0;
-4096]` allocates an array of 4096 bytes and writes zero to every entry. When
-resizing the buffer, the new capacity must also be initialized with zeros. The
-initialization process is not free. When working with `BytesMut` and `BufMut`,
-capacity is **uninitialized**. The `BytesMut` abstraction prevents us from
-reading the uninitialized memory. This lets us avoid the initialization step.
+此外，当使用 `Vec<u8>` 时，缓冲区必须被**初始化 (initialized)**。`vec![0; 4096]` 分配一个 4096 字节的数组，并将零写入每个条目。调整缓冲区大小时，新容量也必须用零初始化。初始化过程不是免费的。当使用 `BytesMut` 和 `BufMut` 时，容量是**未初始化 (uninitialized)** 的。`BytesMut` 抽象防止我们读取未初始化的内存。这让我们避免了初始化步骤。
 
 [`BufMut`]: https://docs.rs/bytes/1/bytes/buf/trait.BufMut.html
 [`bytes`]: https://docs.rs/bytes/
 
-# Parsing
+# 解析 (Parsing)
 
-Now, let's look at the `parse_frame()` function. Parsing is done in two steps.
+现在，让我们看看 `parse_frame()` 函数。解析分两步完成。
 
-1. Ensure a full frame is buffered and find the end index of the frame.
-2. Parse the frame.
+1. 确保缓冲了一个完整的帧，并找到帧的结束索引。
+2. 解析该帧。
 
-The `mini-redis` crate provides us with a function for both of these steps:
+`mini-redis` crate 为这两个步骤都提供了一个函数：
 
 1. [`Frame::check`](https://docs.rs/mini-redis/0.4/mini_redis/frame/enum.Frame.html#method.check)
 2. [`Frame::parse`](https://docs.rs/mini-redis/0.4/mini_redis/frame/enum.Frame.html#method.parse)
 
-We will also reuse the `Buf` abstraction to help. A `Buf` is passed into
-`Frame::check`. As the `check` function iterates the passed in buffer, the
-internal cursor will be advanced. When `check` returns, the buffer's internal
-cursor points to the end of the frame.
+我们也将重用 `Buf` 抽象来提供帮助。一个 `Buf` 被传递给 `Frame::check`。当 `check` 函数迭代传入的缓冲区时，内部光标会前进。当 `check` 返回时，缓冲区的内部光标指向帧的末尾。
 
-For the `Buf` type, we will use [`std::io::Cursor<&[u8]>`][`Cursor`].
+对于 `Buf` 类型，我们将使用 [`std::io::Cursor<&[u8]>`][`Cursor`]。
 
 ```rust
 use mini_redis::{Frame, Result};
@@ -326,80 +280,59 @@ use std::io::Cursor;
 fn parse_frame(&mut self)
     -> Result<Option<Frame>>
 {
-    // Create the `T: Buf` type.
+    // 创建 `T: Buf` 类型。
     let mut buf = Cursor::new(&self.buffer[..]);
 
-    // Check whether a full frame is available
+    // 检查是否有完整的帧可用
     match Frame::check(&mut buf) {
         Ok(_) => {
-            // Get the byte length of the frame
+            // 获取帧的字节长度
             let len = buf.position() as usize;
 
-            // Reset the internal cursor for the
-            // call to `parse`.
+            // 重置内部光标以供
+            // 调用 `parse`。
             buf.set_position(0);
 
-            // Parse the frame
+            // 解析该帧
             let frame = Frame::parse(&mut buf)?;
 
-            // Discard the frame from the buffer
+            // 从缓冲区中丢弃该帧
             self.buffer.advance(len);
 
-            // Return the frame to the caller.
+            // 将帧返回给调用者。
             Ok(Some(frame))
         }
-        // Not enough data has been buffered
+        // 缓冲的数据不足
         Err(Incomplete) => Ok(None),
-        // An error was encountered
+        // 遇到错误
         Err(e) => Err(e.into()),
     }
 }
 # }
 ```
 
-The full [`Frame::check`][check] function can be found [here][check]. We will
-not cover it in its entirety.
+完整的 [`Frame::check`][check] 函数可以在[这里][check]找到。我们不会完整地介绍它。
 
-The relevant thing to note is that `Buf`'s "byte iterator" style APIs are used.
-These fetch data and advance the internal cursor. For example, to parse a frame,
-the first byte is checked to determine the type of the frame. The function used
-is [`Buf::get_u8`]. This fetches the byte at the current cursor's position and
-advances the cursor by one.
+需要注意的相关点是，使用了 `Buf` 的“字节迭代器”风格的 API。这些获取数据并推进内部光标。例如，要解析一个帧，会检查第一个字节以确定帧的类型。使用的函数是 [`Buf::get_u8`]。这会获取当前光标位置的字节，并将光标前进一位。
 
-There are more useful methods on the [`Buf`] trait. Check the [API docs][`Buf`]
-for more details.
+[`Buf`] trait 上还有更多有用的方法。查看 [API 文档][`Buf`] 了解更多详细信息。
 
 [check]: https://github.com/tokio-rs/mini-redis/blob/tutorial/src/frame.rs#L65-L103
 [`Buf::get_u8`]: https://docs.rs/bytes/1/bytes/buf/trait.Buf.html#method.get_u8
 [`Buf`]: https://docs.rs/bytes/1/bytes/buf/trait.Buf.html
 [`Cursor`]: https://doc.rust-lang.org/stable/std/io/struct.Cursor.html
 
-# Buffered writes
+# 缓冲写入 (Buffered writes)
 
-The other half of the framing API is the `write_frame(frame)` function. This
-function writes an entire frame to the socket. In order to minimize `write`
-syscalls, writes will be buffered. A write buffer is maintained and frames are
-encoded to this buffer before being written to the socket. However, unlike
-`read_frame()`, the entire frame is not always buffered to a byte array before
-writing to the socket.
+组帧 API 的另一半是 `write_frame(frame)` 函数。此函数将整个帧写入套接字。为了最小化 `write` 系统调用，写入将被缓冲。维护一个写缓冲区，帧在写入套接字之前被编码到这个缓冲区。然而，与 `read_frame()` 不同，整个帧并不总是在写入套接字之前被缓冲到一个字节数组中。
 
-Consider a bulk stream frame. The value being written is `Frame::Bulk(Bytes)`.
-The wire format of a bulk frame is a frame head, which consists of the `$`
-character followed by the data length in bytes. The majority of the frame is the
-contents of the `Bytes` value. If the data is large, copying it to an
-intermediate buffer would be costly.
+考虑一个批量流帧 (bulk stream frame)。正在写入的值是 `Frame::Bulk(Bytes)`。批量帧的线路格式是一个帧头 (frame head)，由 `$` 字符后跟数据长度（以字节为单位）组成。帧的大部分是 `Bytes` 值的内容。如果数据很大，将其复制到中间缓冲区将是昂贵的。
 
-To implement buffered writes, we will use the [`BufWriter` struct][buf-writer].
-This struct is initialized with a `T: AsyncWrite` and implements `AsyncWrite`
-itself. When `write` is called on `BufWriter`, the write does not go directly to
-the inner writer, but to a buffer. When the buffer is full, the contents are
-flushed to the inner writer and the inner buffer is cleared. There are also
-optimizations that allow bypassing the buffer in certain cases.
+为了实现缓冲写入，我们将使用 [`BufWriter` struct][buf-writer]。这个结构体用一个 `T: AsyncWrite` 初始化，并自己实现 `AsyncWrite`。当在 `BufWriter` 上调用 `write` 时，写入不会直接进入内部写入器，而是进入一个缓冲区。当缓冲区满时，内容会被刷新 (flush) 到内部写入器，并且内部缓冲区被清除。在某些情况下，还有允许绕过缓冲区的优化。
 
-We will not attempt a full implementation of `write_frame()` as part of the
-tutorial. See the full implementation [here][write-frame].
+作为本教程的一部分，我们不会尝试 `write_frame()` 的完整实现。完整的实现见[这里][write-frame]。
 
-First, the `Connection` struct is updated:
+首先，更新 `Connection` 结构体：
 
 ```rust
 use tokio::io::BufWriter;
@@ -421,7 +354,7 @@ impl Connection {
 }
 ```
 
-Next, `write_frame()` is implemented.
+接下来，实现 `write_frame()`。
 
 ```rust
 use tokio::io::{self, AsyncWriteExt};
@@ -472,26 +405,15 @@ async fn write_frame(&mut self, frame: &Frame)
 # }
 ```
 
-The functions used here are provided by [`AsyncWriteExt`]. They are available on
-`TcpStream` as well, but it would not be advisable to issue single byte writes
-without the intermediate buffer.
+这里使用的函数由 [`AsyncWriteExt`] 提供。它们在 `TcpStream` 上也可用，但在没有中间缓冲区的情况下发出单字节写入是不可取的。
 
-* [`write_u8`] writes a single byte to the writer.
-* [`write_all`] writes the entire slice to the writer.
-* [`write_decimal`] is implemented by mini-redis.
+- [`write_u8`] 将单个字节写入写入器。
+- [`write_all`] 将整个切片写入写入器。
+- [`write_decimal`] 由 mini-redis 实现。
 
-The function ends with a call to `self.stream.flush().await`. Because
-`BufWriter` stores writes in an intermediate buffer, calls to `write` do not
-guarantee that the data is written to the socket. Before returning, we want the
-frame to be written to the socket. The call to `flush()` writes any data pending
-in the buffer to the socket.
+该函数以调用 `self.stream.flush().await` 结束。因为 `BufWriter` 将写入存储在中间缓冲区中，所以对 `write` 的调用并不保证数据已写入套接字。在返回之前，我们希望帧被写入套接字。对 `flush()` 的调用会将缓冲区中任何待处理的数据写入套接字。
 
-Another alternative would be to **not** call `flush()` in `write_frame()`.
-Instead, provide a `flush()` function on `Connection`. This would allow the
-caller to write queue multiple small frames in the write buffer then write them
-all to the socket with one `write` syscall. Doing this complicates the
-`Connection` API. Simplicity is one of Mini-Redis' goals, so we decided to
-include the `flush().await` call in `fn write_frame()`.
+另一种选择是在 `write_frame()` 中**不 (not)** 调用 `flush()`。而是在 `Connection` 上提供一个 `flush()` 函数。这将允许调用者在写缓冲区中写入队列多个小帧，然后通过一次 `write` 系统调用将它们全部写入套接字。这样做会使 `Connection` API 复杂化。简洁性是 Mini-Redis 的目标之一，因此我们决定在 `fn write_frame()` 中包含 `flush().await` 调用。
 
 [buf-writer]: https://docs.rs/tokio/1/tokio/io/struct.BufWriter.html
 [write-frame]: https://github.com/tokio-rs/mini-redis/blob/tutorial/src/connection.rs#L159-L184

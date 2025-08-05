@@ -1,51 +1,47 @@
 ---
-title: "Channels"
+title: "通道 (Channels)"
 ---
 
-Now that we have learned a bit about concurrency with Tokio, let's apply this on
-the client side. Put the server code we wrote before into an explicit binary
-file:
+现在我们已经学习了关于 Tokio 并发的一些知识，让我们在客户端应用这些知识。将我们之前编写的服务器代码放入一个显式的二进制文件中：
 
 ```bash
 $ mkdir src/bin
 $ mv src/main.rs src/bin/server.rs
 ```
 
-and create a new binary file that will contain the client code:
+并创建一个新的二进制文件来包含客户端代码：
 
 ```bash
 $ touch src/bin/client.rs
 ```
 
-In this file you will write this page's code. Whenever you want to run it,
-you will have to launch the server first in a separate terminal window:
+在此文件中，你将编写本页的代码。无论何时你想运行它，都必须先在单独的终端窗口中启动服务器：
 
 ```bash
 $ cargo run --bin server
 ```
 
-And then the client, __separately__:
+然后运行客户端，**分开运行**：
 
 ```bash
 $ cargo run --bin client
 ```
 
-That being said, let's code!
+话虽如此，让我们开始编码吧！
 
-Say we want to run two concurrent Redis commands. We can spawn
-one task per command. Then the two commands would happen concurrently.
+假设我们想运行两个并发的 Redis 命令。我们可以为每个命令生成一个任务。然后这两个命令将并发执行。
 
-At first, we might try something like:
+起初，我们可能会尝试这样写：
 
 ```rust,compile_fail
 use mini_redis::client;
 
 #[tokio::main]
 async fn main() {
-    // Establish a connection to the server
+    // 建立与服务器的连接
     let mut client = client::connect("127.0.0.1:6379").await.unwrap();
 
-    // Spawn two tasks, one gets a key, the other sets a key
+    // 生成两个任务，一个获取键，另一个设置键
     let t1 = tokio::spawn(async {
         let res = client.get("foo").await;
     });
@@ -59,54 +55,28 @@ async fn main() {
 }
 ```
 
-This does not compile because both tasks need to access the `client` somehow.
-As `Client` does not implement `Copy`, it will not compile without some code to
-facilitate this sharing. Additionally, `Client::set` takes `&mut self`, which
-means that exclusive access is required to call it. We could open a connection
-per task, but that is not ideal. We cannot use `std::sync::Mutex` as `.await`
-would need to be called with the lock held. We could use `tokio::sync::Mutex`,
-but that would only allow a single in-flight request. If the client implements
-[pipelining] (in short, sending many commands without waiting for each prior
-command's response), an async mutex results in underutilizing
-the connection.
+这无法编译，因为两个任务都需要以某种方式访问 `client`。由于 `Client` 没有实现 `Copy`，因此如果没有一些代码来促进这种共享，它将无法编译。此外，`Client::set` 接收 `&mut self`，这意味着调用它需要独占访问 (exclusive access)。我们可以为每个任务打开一个连接，但这并不理想。我们不能使用 `std::sync::Mutex`，因为需要在持有锁时调用 `.await`。我们可以使用 `tokio::sync::Mutex`，但这只允许单个进行中的请求。如果客户端实现了[管道 (pipelining)][pipelining]（简而言之，发送许多命令而无需等待每个先前命令的响应），异步互斥锁会导致连接利用率不足。
 
 [pipelining]: https://redis.io/topics/pipelining
 
-# Message passing
+# 消息传递 (Message passing)
 
-The answer is to use message passing. The pattern involves spawning a dedicated
-task to manage the `client` resource. Any task that wishes to issue a request
-sends a message to the `client` task. The `client` task issues the request on
-behalf of the sender, and the response is sent back to the sender.
+答案是使用消息传递。该模式涉及生成一个专用任务来管理 `client` 资源。任何希望发出请求的任务都会向 `client` 任务发送一条消息。`client` 任务代表发送者发出请求，并将响应发送回发送者。
 
-Using this strategy, a single connection is established. The task managing the
-`client` is able to get exclusive access in order to call `get` and `set`.
-Additionally, the channel works as a buffer. Operations may be sent to the
-`client` task while the `client` task is busy. Once the `client` task is
-available to process new requests, it pulls the next request from the channel.
-This can result in better throughput, and be extended to support connection
-pooling.
+使用此策略，将建立一个连接。管理 `client` 的任务能够获得独占访问权限，以便调用 `get` 和 `set`。此外，通道充当缓冲区。可以在 `client` 任务忙时向其发送操作。一旦 `client` 任务可用于处理新请求，它就会从通道中拉取下一个请求。这可以提高吞吐量，并扩展为支持连接池 (connection pooling)。
 
-# Tokio's channel primitives
+# Tokio 的通道原语 (Tokio's channel primitives)
 
-Tokio provides a [number of channels][channels], each serving a different purpose.
+Tokio 提供了[多种通道][channels]，每种通道都有不同的用途。
 
-- [mpsc]: multi-producer, single-consumer channel. Many values can be sent.
-- [oneshot]: single-producer, single consumer channel. A single value can be sent.
-- [broadcast]: multi-producer, multi-consumer. Many values can be sent. Each
-  receiver sees every value.
-- [watch]: multi-producer, multi-consumer. Many values can be sent, but no
-  history is kept. Receivers only see the most recent value.
+- [mpsc]: 多生产者，单消费者通道。可以发送多个值。
+- [oneshot]: 单生产者，单消费者通道。只能发送一个值。
+- [broadcast]: 多生产者，多消费者。可以发送多个值。每个接收者都能看到每个值。
+- [watch]: 多生产者，多消费者。可以发送多个值，但不保留历史记录。接收者只看到最新的值。
 
-If you need a multi-producer multi-consumer channel where only one consumer sees
-each message, you can use the [`async-channel`] crate. There are also channels
-for use outside of asynchronous Rust, such as [`std::sync::mpsc`] and
-[`crossbeam::channel`]. These channels wait for messages by blocking the
-thread, which is not allowed in asynchronous code.
+如果你需要一个多生产者多消费者通道，并且只有一个消费者能看到每条消息，你可以使用 [`async-channel`] crate。还有用于异步 Rust 之外的通道，例如 [`std::sync::mpsc`] 和 [`crossbeam::channel`]。这些通道通过阻塞线程来等待消息，这在异步代码中是不允许的。
 
-In this section, we will use [mpsc] and [oneshot]. The other types of message
-passing channels are explored in later sections. The full code from this section
-is found [here][full].
+在本节中，我们将使用 [mpsc] 和 [oneshot]。其他类型的消息传递通道将在后面的章节中探讨。本节的完整代码在[这里][full]。
 
 [channels]: https://docs.rs/tokio/1/tokio/sync/index.html
 [mpsc]: https://docs.rs/tokio/1/tokio/sync/mpsc/index.html
@@ -117,12 +87,9 @@ is found [here][full].
 [`std::sync::mpsc`]: https://doc.rust-lang.org/stable/std/sync/mpsc/index.html
 [`crossbeam::channel`]: https://docs.rs/crossbeam/latest/crossbeam/channel/index.html
 
-# Define the message type
+# 定义消息类型 (Define the message type)
 
-In most cases, when using message passing, the task receiving the messages
-responds to more than one command. In our case, the task will respond to `GET` and
-`SET` commands. To model this, we first define a `Command` enum and include a
-variant for each command type.
+在大多数情况下，使用消息传递时，接收消息的任务会响应多个命令。在我们的例子中，任务将响应 `GET` 和 `SET` 命令。为了对此进行建模，我们首先定义一个 `Command` 枚举，并为每个命令类型包含一个变体。
 
 ```rust
 use bytes::Bytes;
@@ -139,34 +106,28 @@ enum Command {
 }
 ```
 
-# Create the channel
+# 创建通道 (Create the channel)
 
-In the `main` function, an `mpsc` channel is created.
+在 `main` 函数中，创建一个 `mpsc` 通道。
 
 ```rust
 use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() {
-    // Create a new channel with a capacity of at most 32.
+    // 创建一个容量最多为 32 的新通道。
     let (tx, mut rx) = mpsc::channel(32);
 # tx.send(()).await.unwrap();
 
-    // ... Rest comes here
+    // ... 其余代码在这里
 }
 ```
 
-The `mpsc` channel is used to **send** commands to the task managing the redis
-connection. The multi-producer capability allows messages to be sent from many
-tasks. Creating the channel returns two values, a sender and a receiver. The two
-handles are used separately. They may be moved to different tasks.
+`mpsc` 通道用于向管理 redis 连接的任务**发送 (send)** 命令。多生产者功能允许从许多任务发送消息。创建通道会返回两个值，一个发送者 (sender) 和一个接收者 (receiver)。这两个句柄是分开使用的。它们可以被移动到不同的任务中。
 
-The channel is created with a capacity of 32. If messages are sent faster than
-they are received, the channel will store them. Once the 32 messages are stored
-in the channel, calling `send(...).await` will go to sleep until a message has
-been removed by the receiver.
+通道的创建容量为 32。如果消息发送的速度快于接收的速度，通道将存储它们。一旦 32 条消息存储在通道中，调用 `send(...).await` 将进入睡眠状态，直到消息被接收者移除。
 
-Sending from multiple tasks is done by **cloning** the `Sender`. For example:
+从多个任务发送是通过**克隆 (cloning)** `Sender` 来完成的。例如：
 
 ```rust
 use tokio::sync::mpsc;
@@ -190,23 +151,15 @@ async fn main() {
 }
 ```
 
-Both messages are sent to the single `Receiver` handle. It is not possible to
-clone the receiver of an `mpsc` channel.
+两条消息都发送到单个 `Receiver` 句柄。无法克隆 `mpsc` 通道的接收者。
 
-When every `Sender` has gone out of scope or has otherwise been dropped, it is
-no longer possible to send more messages into the channel. At this point, the
-`recv` call on the `Receiver` will return `None`, which means that all senders
-are gone and the channel is closed.
+当每个 `Sender` 都离开作用域或以其他方式被丢弃 (drop) 后，就不再可能向通道发送更多消息。此时，`Receiver` 上的 `recv` 调用将返回 `None`，这意味着所有发送者都已消失，通道已关闭。
 
-In our case of a task that manages the Redis connection, it knows that it
-can close the Redis connection once the channel is closed, as the connection
-will not be used again.
+在我们管理 Redis 连接的任务的情况下，它知道一旦通道关闭就可以关闭 Redis 连接，因为该连接将不再被使用。
 
-# Spawn manager task
+# 生成管理器任务 (Spawn manager task)
 
-Next, spawn a task that processes messages from the channel. First, a client
-connection is established to Redis. Then, received commands are issued via the
-Redis connection.
+接下来，生成一个处理来自通道的消息的任务。首先，建立一个到 Redis 的客户端连接。然后，通过 Redis 连接发出接收到的命令。
 
 ```rust
 use mini_redis::client;
@@ -216,12 +169,12 @@ use mini_redis::client;
 # }
 # async fn dox() {
 # let (_, mut rx) = tokio::sync::mpsc::channel(10);
-// The `move` keyword is used to **move** ownership of `rx` into the task.
+// `move` 关键字用于将 `rx` 的所有权**移动 (move)**到任务中。
 let manager = tokio::spawn(async move {
-    // Establish a connection to the server
+    // 建立与服务器的连接
     let mut client = client::connect("127.0.0.1:6379").await.unwrap();
 
-    // Start receiving messages
+    // 开始接收消息
     while let Some(cmd) = rx.recv().await {
         use Command::*;
 
@@ -238,8 +191,7 @@ let manager = tokio::spawn(async move {
 # }
 ```
 
-Now, update the two tasks to send commands over the channel instead of issuing
-them directly on the Redis connection.
+现在，更新这两个任务，通过通道发送命令，而不是直接在 Redis 连接上发出命令。
 
 ```rust
 # #[derive(Debug)]
@@ -249,11 +201,10 @@ them directly on the Redis connection.
 # }
 # async fn dox() {
 # let (mut tx, _) = tokio::sync::mpsc::channel(10);
-// The `Sender` handles are moved into the tasks. As there are two
-// tasks, we need a second `Sender`.
+// `Sender` 句柄被移动到任务中。由于有两个任务，我们需要第二个 `Sender`。
 let tx2 = tx.clone();
 
-// Spawn two tasks, one gets a key, the other sets a key
+// 生成两个任务，一个获取键，另一个设置键
 let t1 = tokio::spawn(async move {
     let cmd = Command::Get {
         key: "foo".to_string(),
@@ -271,10 +222,9 @@ let t2 = tokio::spawn(async move {
     tx2.send(cmd).await.unwrap();
 });
 # }
-````
+```
 
-At the bottom of the `main` function, we `.await` the join handles to ensure the
-commands fully complete before the process exits.
+在 `main` 函数的底部，我们 `.await` 连接句柄 (join handles)，以确保在进程退出之前命令完全完成。
 
 ```rust
 # type Jh = tokio::task::JoinHandle<()>;
@@ -285,17 +235,13 @@ manager.await.unwrap();
 # }
 ```
 
-# Receive responses
+# 接收响应 (Receive responses)
 
-The final step is to receive the response back from the manager task. The `GET`
-command needs to get the value and the `SET` command needs to know if the
-operation completed successfully.
+最后一步是从管理器任务接收响应。`GET` 命令需要获取值，`SET` 命令需要知道操作是否成功完成。
 
-To pass the response, a `oneshot` channel is used. The `oneshot` channel is a
-single-producer, single-consumer channel optimized for sending a single value.
-In our case, the single value is the response.
+为了传递响应，使用了一个 `oneshot` 通道。`oneshot` 通道是一个单生产者、单消费者通道，针对发送单个值进行了优化。在我们的例子中，单个值就是响应。
 
-Similar to `mpsc`, `oneshot::channel()` returns a sender and receiver handle.
+与 `mpsc` 类似，`oneshot::channel()` 返回一个发送者和接收者句柄。
 
 ```rust
 use tokio::sync::oneshot;
@@ -306,21 +252,17 @@ let (tx, rx) = oneshot::channel();
 # }
 ```
 
-Unlike `mpsc`, no capacity is specified as the capacity is always one.
-Additionally, neither handle can be cloned.
+与 `mpsc` 不同，没有指定容量，因为容量始终为 1。此外，两个句柄都不能被克隆。
 
-To receive responses from the manager task, before sending a command, a `oneshot`
-channel is created. The `Sender` half of the channel is included in the command
-to the manager task. The receive half is used to receive the response.
+为了从管理器任务接收响应，在发送命令之前，会创建一个 `oneshot` 通道。通道的 `Sender` 部分包含在发送给管理器任务的命令中。接收部分用于接收响应。
 
-First, update `Command` to include the `Sender`. For convenience, a type alias
-is used to reference the `Sender`.
+首先，更新 `Command` 以包含 `Sender`。为方便起见，使用类型别名来引用 `Sender`。
 
 ```rust
 use tokio::sync::oneshot;
 use bytes::Bytes;
 
-/// Multiple different commands are multiplexed over a single channel.
+/// 多种不同的命令在单个通道上多路复用。
 #[derive(Debug)]
 enum Command {
     Get {
@@ -334,12 +276,11 @@ enum Command {
     },
 }
 
-/// Provided by the requester and used by the manager task to send
-/// the command response back to the requester.
+/// 由请求者提供，并由管理器任务用于将命令响应发送回请求者。
 type Responder<T> = oneshot::Sender<mini_redis::Result<T>>;
 ```
 
-Now, update the tasks issuing the commands to include the `oneshot::Sender`.
+现在，更新发出命令的任务以包含 `oneshot::Sender`。
 
 ```rust
 # use tokio::sync::{oneshot, mpsc};
@@ -360,10 +301,10 @@ let t1 = tokio::spawn(async move {
         resp: resp_tx,
     };
 
-    // Send the GET request
+    // 发送 GET 请求
     tx.send(cmd).await.unwrap();
 
-    // Await the response
+    // 等待响应
     let res = resp_rx.await;
     println!("GOT = {:?}", res);
 });
@@ -376,17 +317,17 @@ let t2 = tokio::spawn(async move {
         resp: resp_tx,
     };
 
-    // Send the SET request
+    // 发送 SET 请求
     tx2.send(cmd).await.unwrap();
 
-    // Await the response
+    // 等待响应
     let res = resp_rx.await;
     println!("GOT = {:?}", res);
 });
 # }
 ```
 
-Finally, update the manager task to send the response over the `oneshot` channel.
+最后，更新管理器任务，通过 `oneshot` 通道发送响应。
 
 ```rust
 # use tokio::sync::{oneshot, mpsc};
@@ -403,12 +344,12 @@ while let Some(cmd) = rx.recv().await {
     match cmd {
         Command::Get { key, resp } => {
             let res = client.get(&key).await;
-            // Ignore errors
+            // 忽略错误
             let _ = resp.send(res);
         }
         Command::Set { key, val, resp } => {
             let res = client.set(&key, val).await;
-            // Ignore errors
+            // 忽略错误
             let _ = resp.send(res);
         }
     }
@@ -416,26 +357,17 @@ while let Some(cmd) = rx.recv().await {
 # }
 ```
 
-Calling `send` on `oneshot::Sender` completes immediately and does **not**
-require an `.await`. This is because `send` on a `oneshot` channel will always
-fail or succeed immediately without any form of waiting.
+在 `oneshot::Sender` 上调用 `send` 会立即完成，并且**不 (not)** 需要 `.await`。这是因为 `oneshot` 通道上的 `send` 总是会立即失败或成功，而无需任何形式的等待。
 
-Sending a value on a oneshot channel returns `Err` when the receiver half has
-dropped. This indicates the receiver is no longer interested in the response. In
-our scenario, the receiver cancelling interest is an acceptable event. The `Err`
-returned by `resp.send(...)` does not need to be handled.
+当接收者部分被丢弃时，在 oneshot 通道上发送值会返回 `Err`。这表明接收者不再对响应感兴趣。在我们的场景中，接收者取消兴趣是一个可接受的事件。`resp.send(...)` 返回的 `Err` 不需要被处理。
 
-You can find the entire code [here][full].
+你可以在[这里][full]找到整个代码。
 
-# Backpressure and bounded channels
+# 背压 (Backpressure) 和有界通道 (bounded channels)
 
-Whenever concurrency or queuing is introduced, it is important to ensure that the
-queing is bounded and the system will gracefully handle the load. Unbounded queues
-will eventually fill up all available memory and cause the system to fail in
-unpredictable ways.
+每当引入并发或排队时，重要的是确保排队是有界的，并且系统能够优雅地处理负载。无界队列最终会填满所有可用内存，并导致系统以不可预测的方式失败。
 
-Tokio takes care to avoid implicit queuing. A big part of this is the fact that
-async operations are lazy. Consider the following:
+Tokio 注意避免隐式排队。其中一个很大原因是异步操作是惰性的 (lazy)。考虑以下内容：
 
 ```rust
 # fn async_op() {}
@@ -447,39 +379,30 @@ loop {
 # fn main() {}
 ```
 
-If the asynchronous operation runs eagerly, the loop will repeatedly queue a new
-`async_op` to run without ensuring the previous operation completed. This
-results in implicit unbounded queuing. Callback based systems and **eager**
-future based systems are particularly susceptible to this.
+如果异步操作是急切 (eager) 运行的，循环将重复排队一个新的 `async_op` 来运行，而不确保前一个操作完成。这会导致隐式的无界排队。基于回调的系统以及基于**急切 (eager)** future 的系统尤其容易受到此问题的影响。
 
-However, with Tokio and asynchronous Rust, the above snippet will **not** result
-in `async_op` running at all. This is because `.await` is never called. If the
-snippet is updated to use `.await`, then the loop waits for the operation to
-complete before starting over.
+然而，使用 Tokio 和异步 Rust，上面的代码片段将**不会 (not)** 导致 `async_op` 运行。这是因为从未调用 `.await`。如果代码片段更新为使用 `.await`，那么循环会等待操作完成后再重新开始。
 
 ```rust
 # async fn async_op() {}
 # async fn dox() {
 loop {
-    // Will not repeat until `async_op` completes
+    // 在 `async_op` 完成之前不会重复
     async_op().await;
 }
 # }
 # fn main() {}
 ```
 
-Concurrency and queuing must be explicitly introduced. Ways to do this include:
+并发和排队必须显式引入。这样做的方法包括：
 
-* `tokio::spawn`
-* `select!`
-* `join!`
-* `mpsc::channel`
+- `tokio::spawn`
+- `select!`
+- `join!`
+- `mpsc::channel`
 
-When doing so, take care to ensure the total amount of concurrency is bounded. For
-example, when writing a TCP accept loop, ensure that the total number of open
-sockets is bounded. When using `mpsc::channel`, pick a manageable channel
-capacity. Specific bound values will be application specific.
+这样做时，请注意确保总的并发量是有界的。例如，在编写 TCP 接受循环时，确保打开的套接字总数是有界的。使用 `mpsc::channel` 时，选择一个可管理的通道容量。特定的边界值将是特定于应用程序的。
 
-Taking care and picking good bounds is a big part of writing reliable Tokio applications.
+小心并选择好的边界是编写可靠的 Tokio 应用程序的重要组成部分。
 
 [full]: https://github.com/tokio-rs/website/blob/master/tutorial-code/channels/src/main.rs

@@ -9,7 +9,7 @@ const contentDir = path.join(process.cwd(), "content").replace(/\\/g, "/");
 
 // Merge app level props in with page props
 export function withAppProps(
-  props: { props: Record<PropertyKey, unknown> } = { props: {} },
+  props: { props: Record<PropertyKey, unknown> } = { props: {} }
 ) {
   const blog = getLastBlog();
   delete blog.body;
@@ -107,7 +107,7 @@ function setPrevNext(page, menu) {
       }
     },
     undefined,
-    undefined,
+    undefined
   );
 
   return page;
@@ -116,7 +116,7 @@ function setPrevNext(page, menu) {
 // Build a list of paths from the sitemap
 function collectPaths(
   level: Record<string, { nested?: string[]; href?: string }>,
-  prefix = "",
+  prefix = ""
 ) {
   let out = [];
 
@@ -178,30 +178,67 @@ function normalize(menu, root) {
   return out;
 }
 
-export function loadPage(path) {
-  const parts = path.split("/");
-  const base = `${contentDir}/${path}`;
-  const fullPath = `${base}.md`;
-  let mdPath = `${path}.md`;
-  let fileContents;
+export function loadPage(pathArgument: string) {
+  const normalizedContentDir = path.normalize(contentDir);
 
-  if (fs.existsSync(fullPath)) {
-    fileContents = fs.readFileSync(fullPath, "utf-8");
-  } else {
-    mdPath = `${path}/index.md`;
-    fileContents = fs.readFileSync(`${base}/index.md`, "utf-8");
+  let relativePath = pathArgument;
+
+  if (path.isAbsolute(pathArgument)) {
+    const pathFromCwd = path.relative(process.cwd(), pathArgument);
+    if (
+      pathFromCwd.startsWith(path.sep + "content" + path.sep) ||
+      pathFromCwd.startsWith("content" + path.sep)
+    ) {
+      relativePath = pathFromCwd.substring("content".length + 1);
+    }
+  } else if (
+    pathArgument.includes(normalizedContentDir) ||
+    pathArgument.includes(contentDir)
+  ) {
+    let prefixToRemove = normalizedContentDir;
+    if (!pathArgument.startsWith(prefixToRemove)) {
+      prefixToRemove = contentDir;
+    }
+    if (pathArgument.startsWith(prefixToRemove)) {
+      relativePath = pathArgument.substring(prefixToRemove.length);
+      if (relativePath.startsWith(path.sep) || relativePath.startsWith("/")) {
+        relativePath = relativePath.substring(1);
+      }
+    }
   }
 
-  // Use gray-matter to parse the post metadata section
+  if (relativePath.startsWith("./" + path.sep))
+    relativePath = relativePath.substring(2);
+  if (relativePath.startsWith("./")) relativePath = relativePath.substring(2);
+
+  const parts = relativePath.split(path.sep);
+  const base = path.join(normalizedContentDir, relativePath);
+  const fullPathMdFile = path.join(base + ".md");
+  const fullPathIndexMdFile = path.join(base, "index.md");
+
+  let mdPath;
+  let fileContents;
+
+  if (fs.existsSync(fullPathMdFile)) {
+    fileContents = fs.readFileSync(fullPathMdFile, "utf-8");
+    mdPath = `${relativePath}.md`;
+  } else if (fs.existsSync(fullPathIndexMdFile)) {
+    fileContents = fs.readFileSync(fullPathIndexMdFile, "utf-8");
+    mdPath = path.join(relativePath, "index.md");
+  } else {
+    throw new Error(
+      `ENOENT: no such file or directory, tried '${fullPathMdFile}' and '${fullPathIndexMdFile}'`
+    );
+  }
+
   const res = matter(fileContents);
 
   return {
     key: parts[parts.length - 1],
-    // path,
-    href: `/${path}`,
+    href: `/${relativePath.replace(/\\/g, "/")}`,
     title: res.data.title,
     menuTitle: res.data.menu || res.data.title,
-    mdPath,
+    mdPath: mdPath.replace(/\\/g, "/"),
     data: res.data,
     body: res.content,
     description: res.data.description || null,

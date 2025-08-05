@@ -1,45 +1,38 @@
 ---
-title: Getting started with Tracing
+title: Tracing 入门
 ---
 
-The [`tracing`] crate is a framework for instrumenting Rust programs to collect
-structured, event-based diagnostic information.
+[`tracing`] crate 是一个用于检测 Rust 程序以收集结构化的、基于事件的诊断信息的框架。
 
-In asynchronous systems like Tokio, interpreting traditional log messages can
-often be quite challenging. Since individual tasks are multiplexed on the same
-thread, associated events and log lines are intermixed making it difficult to
-trace the logic flow. `tracing` expands upon logging-style diagnostics by
-allowing libraries and applications to record structured events with additional
-information about *temporality* and *causality* — unlike a log message, a
-[`Span`] in `tracing` has a beginning and end time, may be entered and exited
-by the flow of execution, and may exist within a nested tree of similar spans.
-For representing things that occur at a single moment in time, `tracing`
-provides the complementary concept of *events*. Both [`Span`]s and [`Event`]s
-are *structured*, with the ability to record typed data as well as textual
-messages.
+在像 Tokio 这样的异步系统中，解释传统的日志消息通常相当具有挑战性。
+由于单个任务在同一个线程上多路复用，相关的事件和日志行混杂在一起，使得难以追踪逻辑流。
+`tracing` 通过允许库和应用程序记录带有关于*时间性*和*因果性*的附加信息的结构化事件来扩展日志式诊断。
+与日志消息不同，`tracing` 中的 [`Span`] 具有开始和结束时间，可以被执行流进入和退出，
+并且可以存在于一个嵌套的相似 span 树中。为了表示在单一时刻发生的事情，`tracing` 提供了*事件 (events)* 的补充概念。
+[`Span`] 和 [`Event`] 都是*结构化的*，能够记录类型化数据以及文本消息。
 
 [`Span`]: https://docs.rs/tracing/latest/tracing/#spans
 [`Event`]: https://docs.rs/tracing/latest/tracing/#events
 
-You can use `tracing` to:
+您可以使用 `tracing` 来：
 
-- emit distributed traces to an [OpenTelemetry] collector
-- debug your application with [Tokio Console]
-- log to [`stdout`], [a log file] or [`journald`]
-- [profile] where your application is spending time
+- 将分布式跟踪发送到 [OpenTelemetry] 收集器
+- 使用 [Tokio Console] 调试您的应用程序
+- 记录到 [`stdout`]、[日志文件] 或 [`journald`]
+- [分析] 您的应用程序花费时间的位置
 
 [`tracing`]: https://docs.rs/tracing
 [`tracing-subscriber`]: https://docs.rs/tracing-subscriber
 [OpenTelemetry]: https://docs.rs/tracing-opentelemetry
 [Tokio Console]: https://docs.rs/console-subscriber
 [`stdout`]: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/fmt/index.html
-[a log file]: https://docs.rs/tracing-appender/latest/tracing_appender/
+[日志文件]: https://docs.rs/tracing-appender/latest/tracing_appender/
 [`journald`]: https://docs.rs/tracing-journald/latest/tracing_journald/
-[profile]: https://docs.rs/tracing-timing/latest/tracing_timing/
+[分析]: https://docs.rs/tracing-timing/latest/tracing_timing/
 
-# Setup
+# 设置
 
-To begin, add [`tracing`] and [`tracing-subscriber`] as dependencies:
+首先，将 [`tracing`] 和 [`tracing-subscriber`] 添加为依赖项：
 
 ```toml
 [dependencies]
@@ -47,24 +40,18 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 ```
 
-The [`tracing`] crate provides the API we will use to emit traces. The
-[`tracing-subscriber`] crate provides some basic utilities for forwarding those
-traces to external listeners (e.g., `stdout`).
+[`tracing`] crate 提供了我们将用来发出跟踪的 API。
+[`tracing-subscriber`] crate 提供了一些基本工具，用于将这些跟踪转发到外部监听器（例如 `stdout`）。
 
-# Subscribing to Traces
+# 订阅跟踪
 
-If you are authoring an executable (as opposed to a library), you will need to
-register a tracing [*subscriber*]. Subscribers are types that process traces
-emitted by your application and its dependencies, and can perform tasks
-such as computing metrics, monitoring for errors, and re-emitting traces to the
-outside world (e.g., `journald`, `stdout`, or an `open-telemetry` daemon).
+如果您正在编写一个可执行文件（而不是库），您将需要注册一个跟踪 [*订阅者 (subscriber)*]。
+订阅者是处理您的应用程序及其依赖项发出的跟踪的类型，并且可以执行诸如计算指标、监控错误以及将跟踪重新发送到外部世界（例如 `journald`、`stdout` 或 `open-telemetry` 守护进程）等任务。
 
 [*subscriber*]: https://docs.rs/tracing/latest/tracing/#subscribers
 
-In most circumstances, you should register your tracing subscriber as early as
-possible in your `main` function. For instance, the [`FmtSubscriber`] type
-provided by [`tracing-subscriber`] prints formatted traces and events to
-`stdout`, can be registered like so:
+在大多数情况下，您应该尽可能早地在您的 `main` 函数中注册您的跟踪订阅者。
+例如，[`tracing-subscriber`] 提供的 [`FmtSubscriber`] 类型将格式化的跟踪和事件打印到 `stdout`，可以像这样注册：
 
 ```rust
 # mod mini_redis {
@@ -73,9 +60,9 @@ provided by [`tracing-subscriber`] prints formatted traces and events to
 # }
 #[tokio::main]
 pub async fn main() -> mini_redis::Result<()> {
-    // construct a subscriber that prints formatted traces to stdout
+    // 构建一个将格式化的跟踪打印到 stdout 的订阅者
     let subscriber = tracing_subscriber::FmtSubscriber::new();
-    // use that subscriber to process traces emitted after this point
+    // 使用该订阅者处理在此之后发出的跟踪
     tracing::subscriber::set_global_default(subscriber)?;
 # /*
     ...
@@ -85,63 +72,52 @@ pub async fn main() -> mini_redis::Result<()> {
 
 [`FmtSubscriber`]: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/fmt/index.html
 
-If you run your application now, you may see some trace events emitted by Tokio,
-but you will need to modify your own application to emit traces to get the most
-out of `tracing`.
+如果您现在运行您的应用程序，您可能会看到 Tokio 发出的一些跟踪事件，但您需要修改您自己的应用程序以发出跟踪，才能最大限度地利用 `tracing`。
 
-## Subscriber Configuration
+## 订阅者配置
 
-In the above example, we've configured [`FmtSubscriber`] with its default
-configuration. However, `tracing-subscriber` also provides a number of ways to
-configure the [`FmtSubscriber`]'s behavior, such as customizing the output
-format, including additional information (such as thread IDs or source code
-locations) in the logs, and writing the logs to somewhere other than `stdout`.
+在上面的例子中，我们使用其默认配置配置了 [`FmtSubscriber`]。
+但是，`tracing-subscriber` 也提供了许多配置 [`FmtSubscriber`] 行为的方法，
+例如自定义输出格式、在日志中包含附加信息（例如线程 ID 或源代码位置）以及将日志写入 `stdout` 以外的其他地方。
 
-For example:
+例如：
+
 ```rust
-// Start configuring a `fmt` subscriber
+// 开始配置一个 `fmt` 订阅者
 let subscriber = tracing_subscriber::fmt()
-    // Use a more compact, abbreviated log format
+    // 使用更紧凑、缩写的日志格式
     .compact()
-    // Display source code file paths
+    // 显示源代码文件路径
     .with_file(true)
-    // Display source code line numbers
+    // 显示源代码行号
     .with_line_number(true)
-    // Display the thread ID an event was recorded on
+    // 显示记录事件的线程 ID
     .with_thread_ids(true)
-    // Don't display the event's target (module path)
+    // 不显示事件的目标（模块路径）
     .with_target(false)
-    // Build the subscriber
+    // 构建订阅者
     .finish();
 ```
 
-For details on the available configuration options, see [the
-`tracing_subscriber::fmt` documentation][fmt-cfg].
+有关可用配置选项的详细信息，请参阅 [`tracing_subscriber::fmt` 文档][fmt-cfg]。
 
-In addition to the [`FmtSubscriber`] type from [`tracing-subscriber`], other
-`Subscriber`s can implement their own ways of recording `tracing` data. This
-includes alternative output formats, analysis and aggregation, and integration
-with other systems such as distributed tracing or log aggregation services. A
-number of crates provide additional `Subscriber` implementations that may be of
-interest. See [here][related-crates] for an (incomplete) list of additional
-`Subscriber` implementations.
+除了来自 [`tracing-subscriber`] 的 [`FmtSubscriber`] 类型之外，其他 `Subscriber` 可以实现自己记录 `tracing` 数据的方式。
+这包括替代的输出格式、分析和聚合，以及与其他系统（如分布式跟踪或日志聚合服务）的集成。
+许多 crate 提供了可能有用的附加 `Subscriber` 实现。
+有关附加 `Subscriber` 实现的（不完整）列表，请参见 [此处][related-crates]。
 
-Finally, in some cases, it may be useful to combine multiple different ways of
-recording traces together to build a single `Subscriber` that implements
-multiple behaviors. For this purpose, the `tracing-subscriber` crate provides a
-[`Layer`] trait that represents a component that may be composed together with
-other `Layer`s to form a `Subscriber`. See [here][`Layer`] for details on using
-`Layer`s.
+最后，在某些情况下，将多种不同的记录跟踪方式组合在一起以构建一个实现多种行为的单一 `Subscriber` 可能会很有用。
+为此，`tracing-subscriber` crate 提供了一个 [`Layer`] trait，它表示一个可以与其他 `Layer` 组合在一起形成 `Subscriber` 的组件。
+有关使用 `Layer` 的详细信息，请参见 [此处][`Layer`]。
 
 [fmt-cfg]: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/fmt/index.html#configuration
 [related-crates]: https://docs.rs/tracing/latest/tracing/index.html#related-crates
 [`Layer`]: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/layer/index.html
 
-# Emitting Spans and Events
+# 发出 Span 和事件
 
-The easiest way to emit spans is with the [`instrument`] proc-macro annotation
-provided by [`tracing`], which re-writes the bodies of functions to emit spans
-each time they are invoked; e.g.:
+发出 span 最简单的方法是使用 [`tracing`] 提供的 [`instrument`] 过程宏注释，
+它会重写函数体，以便在每次调用它们时发出 span；例如：
 
 ```rust
 #[tracing::instrument]
@@ -150,16 +126,15 @@ fn trace_me(a: u32, b: u32) -> u32 {
 }
 ```
 
-Each invocation of `trace_me` will emit a `tracing` Span that:
+每次调用 `trace_me` 都会发出一个 `tracing` Span，它：
 
-1. has a verbosity [level] of `info` (the "middle ground" verbosity),
-2. is named `trace_me`,
-3. has fields `a` and `b`, whose values are the arguments of `trace_me`
+1. 具有 `info` 的详细程度 [级别]（“中等”详细程度），
+2. 名称为 `trace_me`，
+3. 具有字段 `a` 和 `b`，它们的值是 `trace_me` 的参数
 
 [`instrument`]: https://docs.rs/tracing/latest/tracing/attr.instrument.html
 
-The [`instrument`] attribute is highly configurable; e.g., to trace
-the method in [`mini-redis-server`] that handles each connection:
+[`instrument`] 属性是高度可配置的；例如，要跟踪 [`mini-redis-server`] 中处理每个连接的方法：
 
 [`mini-redis-server`]: ../tutorial/setup#mini-redis
 
@@ -172,12 +147,12 @@ the method in [`mini-redis-server`] that handles each connection:
 use tracing::instrument;
 
 impl Handler {
-    /// Process a single connection.
+    /// 处理单个连接。
     #[instrument(
         name = "Handler::run",
         skip(self),
         fields(
-            // `%` serializes the peer IP addr with `Display`
+            // `%` 使用 `Display` 序列化对等 IP 地址
             peer_addr = %self.connection.peer_addr().unwrap()
         ),
     )]
@@ -189,22 +164,17 @@ impl Handler {
 }
 ```
 
-[`mini-redis-server`] will now emit a `tracing` Span for each incoming
-connection that:
+[`mini-redis-server`] 现在将为每个传入连接发出一个 `tracing` Span，它：
 
-1. has a verbosity [level] of `info` (the "middle ground" verbosity),
-2. is named `Handler::run`,
-3. has some structured data associated with it.
-    - `fields(...)` indicates that emitted span *should* include
-    the `fmt::Display` representation of the connection's `SocketAddr` in a field
-    called `peer_addr`.
-    - `skip(self)` indicates that emitted span should *not* record `Handler`'s debug representation.
+1. 具有 `info` 的详细程度 [级别]（“中等”详细程度），
+2. 名称为 `Handler::run`，
+3. 具有一些与之关联的结构化数据。
+   - `fields(...)` 表示发出的 span _应该_ 在名为 `peer_addr` 的字段中包含连接的 `SocketAddr` 的 `fmt::Display` 表示形式。
+   - `skip(self)` 表示发出的 span _不应该_ 记录 `Handler` 的调试表示形式。
 
-[level]: https://docs.rs/tracing/latest/tracing/struct.Level.html
+[级别]: https://docs.rs/tracing/latest/tracing/struct.Level.html
 
-You can also construct a [`Span`] manually by invoking the [`span!`] macro, or
-any of its leveled shorthands ([`error_span!`], [`warn_span!`], [`info_span!`],
-[`debug_span!`], [`trace_span!`]).
+您也可以通过调用 [`span!`] 宏或其任何级别简写（[`error_span!`]、[`warn_span!`]、[`info_span!`]、[`debug_span!`]、[`trace_span!`]）来手动构造 [`Span`]。
 
 [`span!`]: https://docs.rs/tracing/*/tracing/macro.span.html
 [`error_span!`]: https://docs.rs/tracing/*/tracing/macro.error_span.html
@@ -213,9 +183,9 @@ any of its leveled shorthands ([`error_span!`], [`warn_span!`], [`info_span!`],
 [`debug_span!`]: https://docs.rs/tracing/*/tracing/macro.debug_span.html
 [`trace_span!`]: https://docs.rs/tracing/*/tracing/macro.trace_span.html
 
-To emit events, invoke the [`event!`] macro, or any of its leveled shorthands
-([`error!`], [`warn!`], [`info!`], [`debug!`], [`trace!`]). For instance, to
-log that a client sent a malformed command:
+要发出事件，请调用 [`event!`] 宏或其任何级别简写（[`error!`]、[`warn!`]、[`info!`]、[`debug!`]、[`trace!`]）。
+例如，要记录客户端发送了格式错误的命令：
+
 ```rust
 # type Error = Box<dyn std::error::Error + Send + Sync>;
 # type Result<T> = std::result::Result<T, Error>;
@@ -227,28 +197,24 @@ log that a client sent a malformed command:
 #     fn from_error<T>(err: T) {}
 # }
 # let frame = ();
-// Convert the redis frame into a command struct. This returns an
-// error if the frame is not a valid redis command.
+// 将 redis 帧转换为命令结构体。如果帧不是有效的 redis 命令，则返回错误。
 let cmd = match Command::from_frame(frame) {
     Ok(cmd) => cmd,
     Err(cause) => {
-        // The frame was malformed and could not be parsed. This is
-        // probably indicative of an issue with the client (as opposed
-        // to our server), so we (1) emit a warning...
+        // 帧格式错误，无法解析。这可能表明客户端存在问题（与我们的服务器相反），
+        // 因此我们 (1) 发出一个警告...
         //
-        // The syntax here is a shorthand provided by the `tracing`
-        // crate. It can be thought of as similar to:
+        // 这里的语法是 `tracing` crate 提供的简写形式。可以认为它类似于：
         //      tracing::warn! {
         //          cause = format!("{}", cause),
         //          "failed to parse command from frame"
         //      };
-        // `tracing` provides structured logging, so information is
-        // "logged" as key-value pairs.
+        // `tracing` 提供结构化日志记录，因此信息以键值对的形式“记录”。
         tracing::warn! {
             %cause,
             "failed to parse command from frame"
         };
-        // ...and (2) respond to the client with the error:
+        // ...并且 (2) 向客户端响应错误：
         Command::from_error(cause)
     }
 };
@@ -261,5 +227,4 @@ let cmd = match Command::from_frame(frame) {
 [`debug!`]: https://docs.rs/tracing/*/tracing/macro.debug.html
 [`trace!`]: https://docs.rs/tracing/*/tracing/macro.trace.html
 
-If you run your application, you now will see events decorated with their span's
-context emitted for each incoming connection that it processes.
+如果您运行您的应用程序，您现在将看到为它处理的每个传入连接发出的、装饰有其 span 上下文的事件。

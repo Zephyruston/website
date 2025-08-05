@@ -1,33 +1,35 @@
 ---
-title: "Bridging with sync code"
+title: "与同步代码桥接"
 ---
 
-In most examples of using Tokio, we mark the main function with `#[tokio::main]`
-and make the entire project asynchronous.
+在大多数使用 Tokio 的示例中，我们使用 `#[tokio::main]` 标记 main 函数，
+并将整个项目设置为异步。
 
-In some cases, you may need to run a small portion of synchronous code.  For more
-information on that, see [`spawn_blocking`].
+在某些情况下，您可能需要运行一小部分同步代码。有关更多信息，
+请参见 [`spawn_blocking`]。
 
-In other cases, it may be easier to structure the application as largely
-synchronous, with smaller or logically distinct asynchronous portions.
-For instance, a GUI application might want to run the GUI code on the
-main thread and run a Tokio runtime next to it on another thread.
+在其他情况下，将应用程序构建为大体上是同步的，
+而较小或逻辑上独立的异步部分可能更容易。
+例如，GUI 应用程序可能希望在主线程上运行 GUI 代码，
+并在另一个线程上并行运行 Tokio 运行时。
 
-This page explains how you can isolate async/await to a small part of your
-project.
+本页说明了如何将 async/await 隔离到项目的一小部分。
 
-# What `#[tokio::main]` expands to
+# `#[tokio::main]` 展开后的内容
 
-The `#[tokio::main]` macro is a macro that replaces your main function with a
-non-async main function that starts a runtime and then calls your code. For
-instance, this:
+`#[tokio::main]` 宏是一个宏，它用一个非异步的 main 函数替换您的 main 函数，
+该函数启动一个运行时，然后调用您的代码。例如，
+这个：
+
 ```rust
 #[tokio::main]
 async fn main() {
     println!("Hello world");
 }
 ```
-is turned into this:
+
+会被宏转换为这样：
+
 ```rust
 fn main() {
     tokio::runtime::Builder::new_multi_thread()
@@ -39,42 +41,41 @@ fn main() {
         })
 }
 ```
-by the macro. To use async/await in our own projects, we can do something
-similar where we leverage the [`block_on`] method to enter the asynchronous
-context where appropriate.
 
-# A synchronous interface to mini-redis
+为了在我们自己的项目中使用 async/await，我们可以做类似的事情，
+利用 [`block_on`] 方法在适当的时候进入异步上下文。
 
-In this section, we will go through how to build a synchronous interface to
-mini-redis by storing a `Runtime` object and using its `block_on` method.
-In the following sections, we will discuss some alternate approaches and when
-you should use each approach.
+# mini-redis 的同步接口
 
-The interface that we will be wrapping is the asynchronous [`Client`] type. It
-has several methods, and we will implement a blocking version of the following
-methods:
+在本节中，我们将介绍如何通过存储 `Runtime` 对象并使用其 `block_on` 方法
+来构建 mini-redis 的同步接口。
+在接下来的几节中，我们将讨论一些替代方法以及何时应该使用每种方法。
 
- * [`Client::get`]
- * [`Client::set`]
- * [`Client::set_expires`]
- * [`Client::publish`]
- * [`Client::subscribe`]
+我们将要包装的接口是异步的 [`Client`] 类型。
+它有几个方法，我们将为以下方法实现一个阻塞版本：
 
-To do this, we introduce a new file called `src/clients/blocking_client.rs` and
-initialize it with a wrapper struct around the async `Client` type:
+- [`Client::get`]
+- [`Client::set`]
+- [`Client::set_expires`]
+- [`Client::publish`]
+- [`Client::subscribe`]
+
+为此，我们引入一个名为 `src/clients/blocking_client.rs` 的新文件，
+并使用一个围绕异步 `Client` 类型的包装结构体来初始化它：
+
 ```rs
 use tokio::net::ToSocketAddrs;
 use tokio::runtime::Runtime;
 
 pub use crate::clients::client::Message;
 
-/// Established connection with a Redis server.
+/// 与 Redis 服务器建立的连接。
 pub struct BlockingClient {
-    /// The asynchronous `Client`.
+    /// 异步的 `Client`。
     inner: crate::clients::Client,
 
-    /// A `current_thread` runtime for executing operations on the
-    /// asynchronous client in a blocking manner.
+    /// 一个 `current_thread` 运行时，用于以阻塞方式
+    /// 执行异步客户端上的操作。
     rt: Runtime,
 }
 
@@ -84,35 +85,34 @@ impl BlockingClient {
             .enable_all()
             .build()?;
 
-        // Call the asynchronous connect method using the runtime.
+        // 使用运行时调用异步的 connect 方法。
         let inner = rt.block_on(crate::clients::Client::connect(addr))?;
 
         Ok(BlockingClient { inner, rt })
     }
 }
 ```
-Here, we have included the constructor function as our first example of how to
-execute asynchronous methods in a non-async context. We do this using the
-[`block_on`] method on the Tokio [`Runtime`] type, which executes an
-asynchronous method and returns its result.
 
-One important detail is the use of the [`current_thread`] runtime. Usually when
-using Tokio, you would be using the default [`multi_thread`] runtime, which will
-spawn a bunch of background threads so it can efficiently run many things at the
-same time. For our use-case, we are only going to be doing one thing at the
-time, so we won't gain anything by running multiple threads. This makes the
-[`current_thread`] runtime a perfect fit as it doesn't spawn any threads.
+在这里，我们将构造函数包含在内，作为如何在非异步上下文中
+执行异步方法的第一个示例。我们使用 Tokio [`Runtime`] 类型的
+[`block_on`] 方法来做到这一点，该方法执行一个异步方法并返回其结果。
 
-The [`enable_all`] call enables the IO and timer drivers on the Tokio runtime.
-If they are not enabled, the runtime is unable to perform IO or timers.
+一个重要的细节是使用了 [`current_thread`] 运行时。
+通常在使用 Tokio 时，您会使用默认的 [`multi_thread`] 运行时，
+它会生成一堆后台线程，以便可以同时高效地运行许多任务。
+对于我们的用例，我们一次只做一件事，所以运行多个线程不会有任何好处。
+这使得 [`current_thread`] 运行时成为完美选择，因为它不生成任何线程。
 
-> **warning**
-> Because the `current_thread` runtime does not spawn threads, it only operates
-> when `block_on` is called. Once `block_on` returns, all spawned tasks on that
-> runtime will freeze until you call `block_on` again. Use the `multi_threaded`
-> runtime if spawned tasks must keep running when not calling `block_on`.
+[`enable_all`] 调用会启用 Tokio 运行时上的 IO 和定时器驱动程序。
+如果未启用，运行时将无法执行 IO 或定时器操作。
 
-Once we have this struct, most of the methods are easy to implement:
+> **警告**
+> 因为 `current_thread` 运行时不生成线程，所以它只在调用 `block_on` 时运行。
+> 一旦 `block_on` 返回，该运行时上所有已 spawn 的任务都将冻结，直到您再次调用 `block_on`。
+> 如果已 spawn 的任务必须在未调用 `block_on` 时保持运行，请使用 `multi_threaded` 运行时。
+
+一旦我们有了这个结构体，大多数方法都很容易实现：
+
 ```rs
 use bytes::Bytes;
 use std::time::Duration;
@@ -140,22 +140,22 @@ impl BlockingClient {
     }
 }
 ```
-The [`Client::subscribe`] method is more interesting because it transforms the
-`Client` into a `Subscriber` object. We can implement it in the following
-manner:
+
+[`Client::subscribe`] 方法更有趣，因为它将 `Client` 转换为 `Subscriber` 对象。
+我们可以按以下方式实现它：
+
 ```rs
-/// A client that has entered pub/sub mode.
+/// 已进入发布/订阅模式的客户端。
 ///
-/// Once clients subscribe to a channel, they may only perform
-/// pub/sub related commands. The `BlockingClient` type is
-/// transitioned to a `BlockingSubscriber` type in order to
-/// prevent non-pub/sub methods from being called.
+/// 一旦客户端订阅了频道，它们就只能执行与发布/订阅相关的命令。
+/// `BlockingClient` 类型被转换为 `BlockingSubscriber` 类型，
+/// 以防止调用非发布/订阅相关的方法。
 pub struct BlockingSubscriber {
-    /// The asynchronous `Subscriber`.
+    /// 异步的 `Subscriber`。
     inner: crate::clients::Subscriber,
 
-    /// A `current_thread` runtime for executing operations on the
-    /// asynchronous client in a blocking manner.
+    /// 一个 `current_thread` 运行时，用于以阻塞方式
+    /// 执行异步客户端上的操作。
     rt: Runtime,
 }
 
@@ -187,30 +187,30 @@ impl BlockingSubscriber {
     }
 }
 ```
-So, the `subscribe` method will first use the runtime to transform the
-asynchronous `Client` into an asynchronous `Subscriber`. Then, it will store the
-resulting `Subscriber` together with the `Runtime` and implement the various
-methods using [`block_on`].
 
-Note that the asynchronous `Subscriber` struct has a non-async method called
-`get_subscribed`. To handle this, we simply call it directly without involving
-the runtime.
+因此，`subscribe` 方法将首先使用运行时将异步的 `Client` 转换为异步的 `Subscriber`。
+然后，它将生成的 `Subscriber` 与 `Runtime` 一起存储，并使用 [`block_on`] 实现各种方法。
 
-# Other approaches
+请注意，异步的 `Subscriber` 结构体有一个名为 `get_subscribed` 的非异步方法。
+为了处理这个问题，我们直接调用它，而不涉及运行时。
 
-The above section explains the simplest way to implement a synchronous wrapper,
-but it is not the only way. The approaches are:
+# 其他方法
 
- * Create a [`Runtime`] and call [`block_on`] on the async code.
- * Create a [`Runtime`] and [`spawn`] things on it.
- * Run the [`Runtime`] in a separate thread and send messages to it.
+上一节解释了实现同步包装器最简单的方法，但这并不是唯一的方法。
+这些方法包括：
 
-We already saw the first approach. The two other approaches are outlined below.
+- 创建一个 [`Runtime`] 并在异步代码上调用 [`block_on`]。
+- 创建一个 [`Runtime`] 并在其上 [`spawn`] 任务。
+- 在单独的线程中运行 [`Runtime`] 并向其发送消息。
 
-## Spawning things on a runtime
+我们已经看到了第一种方法。下面概述了另外两种方法。
 
-The [`Runtime`] object has a method called [`spawn`]. When you call this method,
-you create a new background task to run on the runtime. For example:
+## 在运行时上生成任务
+
+[`Runtime`] 对象有一个名为 [`spawn`] 的方法。
+当您调用此方法时，您会创建一个新的后台任务在运行时上运行。
+例如：
+
 ```rust
 use tokio::runtime::Builder;
 use tokio::time::{sleep, Duration};
@@ -227,21 +227,20 @@ fn main() {
         handles.push(runtime.spawn(my_bg_task(i)));
     }
 
-    // Do something time-consuming while the background tasks execute.
+    // 在后台任务执行时做一些耗时的事情。
     std::thread::sleep(Duration::from_millis(750));
     println!("Finished time-consuming task.");
 
-    // Wait for all of them to complete.
+    // 等待它们全部完成。
     for handle in handles {
-        // The `spawn` method returns a `JoinHandle`. A `JoinHandle` is
-        // a future, so we can wait for it using `block_on`.
+        // `spawn` 方法返回一个 `JoinHandle`。`JoinHandle` 是一个 future，
+        // 所以我们可以使用 `block_on` 等待它。
         runtime.block_on(handle).unwrap();
     }
 }
 
 async fn my_bg_task(i: u64) {
-    // By subtracting, the tasks with larger values of i sleep for a
-    // shorter duration.
+    // 通过减法，i 值较大的任务睡眠时间较短。
     let millis = 1000 - 50 * i;
     println!("Task {} sleeping for {} ms.", i, millis);
 
@@ -250,6 +249,7 @@ async fn my_bg_task(i: u64) {
     println!("Task {} stopping.", i);
 }
 ```
+
 ```text
 Task 0 sleeping for 1000 ms.
 Task 1 sleeping for 950 ms.
@@ -273,39 +273,34 @@ Task 2 stopping.
 Task 1 stopping.
 Task 0 stopping.
 ```
-In the above example, we spawn 10 background tasks on the runtime, then wait
-for all of them. As an example, this could be a good way of implementing
-background network requests in a graphical application because network requests
-are too time consuming to run them on the main GUI thread. Instead, you spawn
-the request on a Tokio runtime running in the background, and have the task send
-information back to the GUI code when the request has finished, or even
-incrementally if you want a progress bar.
 
-In this example, it is important that the runtime is configured to be a
-[`multi_thread`] runtime. If you change it to be a [`current_thread`] runtime,
-you will find that the time consuming task finishes before any of the background
-tasks start. This is because background tasks spawned on a `current_thread`
-runtime will only execute during calls to `block_on` as the runtime otherwise
-doesn't have anywhere to run them.
+在上面的例子中，我们在运行时上生成了 10 个后台任务，然后等待它们全部完成。
+例如，这可以是在图形应用程序中实现后台网络请求的好方法，
+因为网络请求太耗时，无法在主 GUI 线程上运行。
+相反，您在后台运行的 Tokio 运行时上生成请求，
+并让任务在请求完成时（甚至如果您想要进度条，则可以增量地）
+将信息发送回 GUI 代码。
 
-The example waits for the spawned tasks to finish by calling `block_on` on the
-[`JoinHandle`] returned by the call to [`spawn`], but this isn't the only way to
-do it. Here are some alternatives:
+在这个例子中，重要的是运行时被配置为 [`multi_thread`] 运行时。
+如果将其更改为 [`current_thread`] 运行时，您会发现耗时的任务在任何后台任务开始之前就完成了。
+这是因为在 `current_thread` 运行时上生成的后台任务只会在调用 `block_on` 期间执行，
+因为否则运行时没有地方可以运行它们。
 
- * Use a message passing channel such as [`tokio::sync::mpsc`].
- * Modify a shared value protected by e.g. a `Mutex`. This can be a good
-   approach for a progress bar in a GUI, where the GUI reads the shared value
-   every frame.
+该示例通过在调用 [`spawn`] 返回的 [`JoinHandle`] 上调用 `block_on` 来等待已生成的任务完成，
+但这并不是唯一的方法。这里有一些替代方案：
 
-The `spawn` method is also available on the [`Handle`] type. The `Handle` type
-can be cloned to get many handles to a runtime, and each `Handle` can be used to
-spawn new tasks on the runtime.
+- 使用消息传递通道，例如 [`tokio::sync::mpsc`]。
+- 修改受例如 `Mutex` 保护的共享值。对于 GUI 中的进度条，这可能是一个好方法，
+  GUI 每帧读取共享值。
 
-## Sending messages
+`spawn` 方法在 [`Handle`] 类型上也可用。
+可以克隆 `Handle` 类型以获得多个运行时句柄，并且每个 `Handle` 都可用于在运行时上生成新任务。
 
-The third technique is to spawn a runtime and use message passing to communicate
-with it. This involves a bit more boilerplate than the other two approaches, but
-it is the most flexible approach. You can find a basic example below:
+## 发送消息
+
+第三种方法是生成一个运行时并使用消息传递与其通信。
+这比前两种方法涉及更多的样板代码，但它是最灵活的方法。
+您可以在下面找到一个基本示例：
 
 ```rust
 use tokio::runtime::Builder;
@@ -313,7 +308,7 @@ use tokio::sync::mpsc;
 
 pub struct Task {
     name: String,
-    // info that describes the task
+    // 描述任务的信息
 }
 
 async fn handle_task(task: Task) {
@@ -327,14 +322,13 @@ pub struct TaskSpawner {
 
 impl TaskSpawner {
     pub fn new() -> TaskSpawner {
-        // Set up a channel for communicating.
+        // 设置一个用于通信的通道。
         let (send, mut recv) = mpsc::channel(16);
 
-        // Build the runtime for the new thread.
+        // 为新线程构建运行时。
         //
-        // The runtime is created before spawning the thread
-        // to more cleanly forward errors if the `unwrap()`
-        // panics.
+        // 运行时在生成线程之前创建，
+        // 以便在 `unwrap()` 发生 panic 时更清晰地转发错误。
         let rt = Builder::new_current_thread()
             .enable_all()
             .build()
@@ -346,10 +340,9 @@ impl TaskSpawner {
                     tokio::spawn(handle_task(task));
                 }
 
-                // Once all senders have gone out of scope,
-                // the `.recv()` call returns None and it will
-                // exit from the while loop and shut down the
-                // thread.
+                // 一旦所有发送者都超出作用域，
+                // `.recv()` 调用将返回 None，并且它将
+                // 退出 while 循环并关闭线程。
             });
         });
 
@@ -366,10 +359,11 @@ impl TaskSpawner {
     }
 }
 ```
-This example could be configured in many ways. For instance, you could use a
-[`Semaphore`] to limit the number of active tasks, or you could use a channel in
-the opposite direction to send a response to the spawner. When you spawn a
-runtime in this way, it is a type of [actor].
+
+这个例子可以通过多种方式进行配置。
+例如，您可以使用 [`Semaphore`] 来限制活动任务的数量，
+或者您可以使用相反方向的通道向生成器发送响应。
+当您以这种方式生成运行时时，它是一种 [actor]。
 
 [`Runtime`]: https://docs.rs/tokio/1/tokio/runtime/struct.Runtime.html
 [`block_on`]: https://docs.rs/tokio/1/tokio/runtime/struct.Runtime.html#method.block_on
